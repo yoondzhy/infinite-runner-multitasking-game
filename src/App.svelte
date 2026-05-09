@@ -1,19 +1,61 @@
 <script>
 // @ts-nocheck
-import { onMount } from "svelte";
+import LandingPage from './LandingPage.svelte';
+import { onMount, tick } from "svelte";
 import * as THREE from "three";
 import p5 from "p5";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
-const CONFIG = { lane: 2.5, jump: 0.35, grav: 0.015, speed: 55, playerScale: 1.7 };
+let showLanding = true;
 
+// Fix for Clock deprecation warning
+let lastTime = performance.now();
+
+async function handleStart() {
+  showLanding = false;
+  // Wait for Svelte to render the #wrapper and canvas
+  await tick();
+  
+  init();
+  p5Instance = new p5(sketch, p5Container);
+  
+  // Start the game logic
+  startGame();
+  
+  // Start the render loop
+  const loop = () => { 
+    animationFrame = requestAnimationFrame(loop); 
+    update(); 
+    if (renderer && scene && camera) {
+      renderer.render(scene, camera); 
+    }
+  };
+  loop();
+}
+
+// Change CONFIG to include speed limits
+const CONFIG = { 
+  lane: 2.5, 
+  jump: 0.35, 
+  grav: 0.015, 
+  playerScale: 1.7,
+  START_SPEED: 45,   // Initial slow speed
+  MAX_SPEED: 95,     // The "chaos" threshold
+  ACCELERATION: 1.5  // Speed added per second
+};
+
+let currentSpeed = CONFIG.START_SPEED;
 let score = 0, isPlaying = false, gameOver = false, startScreen = true;
 let attentiveness = 100;
+let lives = 5; // --- NEW: Lives tracker ---
 let lane = 0, currX = 0, isJumping = false, jumpV = 0, playerY = 0;
 let container, canvas, scene, camera, renderer, p5Container;
 let worldObjects = [], animationFrame, p5Instance;
 let isDying = false, hitFlash = false;
+
+let spawnDistanceTracker = 0;
+const SPAWN_INTERVAL = 40; // Physical distance between obstacles
 
 // 2D Game Logic
 let gamePhase = "START"; 
@@ -28,44 +70,83 @@ const CHUNK_SIZE = 140;
 
 let uTime = { value: 0 };
 const loader = new GLTFLoader();
-const clock = new THREE.Clock();
 const glbCache = new Map();
 
-// --- P5 SKETCH (HUD, 2D Hammer & Rare Targets) ---
+let textures = {};
+
 const sketch = (p) => {
-  p.setup = () => {
-    p.createCanvas(p.windowWidth, p.windowHeight);
+  // --- FOOLPROOF IMAGE LOADER ---
+  p.setup = async () => {
+    const w = container?.clientWidth || p.windowWidth;
+    const h = container?.clientHeight || p.windowHeight;
+    p.createCanvas(w, h);
+
+    // Load images and store them in the textures object
+    // Using p.loadImage with a promise-like approach
+    const loadImg = (path) => new Promise(resolve => {
+      p.loadImage(path, img => resolve(img), () => resolve(null));
+    });
+
+    textures.NEURON = await loadImg('strawberry.png');
+    textures.SUGAR = await loadImg('banana.png');
+    textures.GLITCH = await loadImg('blubb.png');
   };
+
+  // --- NEW: Function to draw a pixelated heart ---
+  const drawHeart = (x, y, size, active) => {
+      p.push();
+      p.noStroke();
+      // Use red if active, grey if dead
+      p.fill(active ? [255, 50, 50] : [100, 100, 100, 150]);
+      const s = size / 5;
+      p.rect(x + s, y, s, s); p.rect(x + 3 * s, y, s, s);
+      p.rect(x, y + s, 5 * s, s);
+      p.rect(x, y + 2 * s, 5 * s, s);
+      p.rect(x + s, y + 3 * s, 3 * s, s);
+      p.rect(x + 2 * s, y + 4 * s, s, s);
+      p.pop();
+    };
 
   p.draw = () => {
     p.clear();
     if (!isPlaying) return;
 
     if (gamePhase === "INSTRUCTIONS") {
-      p.fill(0, 180);
+      p.fill(0, 200); // Darken background
       p.rect(0, 0, p.width, p.height);
+      
       p.fill(255);
       p.textAlign(p.CENTER);
-      p.textSize(24);
-      p.text(`NEURO-MISSION: CLICK THE ${targetType}`, p.width/2, p.height/2 - 20);
-      p.textSize(60);
-      p.text(Math.ceil(instructionTimer), p.width/2, p.height/2 + 60);
+      p.textFont('Segoe UI');
+      p.textStyle(p.BOLD);
+      
+      // The Mission Text
+      p.textSize(28);
+      p.text(`NEURO-MISSION: COLLECT`, p.width / 2, p.height / 2 - 100);
+      
+      // Draw the target icon to collect
+      const targetImg = textures[targetType];
+      if (targetImg) {
+        p.imageMode(p.CENTER);
+        p.image(targetImg, p.width / 2, p.height / 2 - 20, 80, 80);
+      }
+      
+      p.textSize(32);
+      p.fill(0, 255, 200); // Cyan color for the target name
+      p.text(targetType, p.width / 2, p.height / 2 + 60);
+      
+      // Countdown
+      p.fill(255);
+      p.textSize(80);
+      p.text(Math.ceil(instructionTimer), p.width / 2, p.height / 2 + 160);
       return;
     }
+    // --- RENDER HEARTS ---
+    for (let i = 0; i < 5; i++) { // Always run 5 times
+      drawHeart(20 + (i * 35), 20, 25, i < lives);
+    }
 
-    // Attentiveness Meter
-    p.noFill();
-    p.stroke(255, 100);
-    p.strokeWeight(2);
-    p.rect(20, 20, 200, 20, 10);
-    let color = p.lerpColor(p.color(255, 50, 50), p.color(50, 255, 150), attentiveness / 100);
-    p.fill(color);
-    p.noStroke();
-    let w = (attentiveness / 100) * 200;
-    if (attentiveness < 30) w += p.sin(p.frameCount * 0.2) * 5;
-    p.rect(20, 20, Math.max(0, w), 20, 10);
-
-    // Spawning Rare 2D Targets (0.4% chance)
+    // Spawning Logic (keeping your random chance)
     if (p.random(1) < 0.004) {
       const types = ["NEURON", "SUGAR", "GLITCH"];
       targets.push({
@@ -77,7 +158,7 @@ const sketch = (p) => {
       });
     }
 
-    // Process 2D Targets
+    // --- RENDER IMAGES ---
     for (let i = targets.length - 1; i >= 0; i--) {
       let t = targets[i];
       t.y += t.speed;
@@ -86,24 +167,30 @@ const sketch = (p) => {
       p.push();
       p.translate(t.x, t.y);
       p.rotate(t.rot);
-      p.strokeWeight(2);
-      if (t.type === "NEURON") {
-        p.stroke(0, 255, 200); p.noFill();
-        for(let j=0; j<8; j++) p.line(0,0, p.cos(j)*20, p.sin(j)*20);
-        p.ellipse(0, 0, 12);
-      } else if (t.type === "SUGAR") {
-        p.fill(255, 105, 180); p.noStroke();
-        p.ellipse(0, 0, 25, 25); p.fill(255); p.ellipse(0, 0, 8);
+      p.imageMode(p.CENTER);
+
+      // Check if the texture exists before trying to draw it
+      const img = textures[t.type];
+      if (img) {
+        // Draw the image. Scale it to 40x40 pixels (adjust as needed)
+        p.image(img, 0, 0, 60, 60);
       } else {
-        p.fill(255, 50, 0); p.noStroke();
-        p.rect(-12, -12, 24, 24);
+        // Fallback: draw a small circle if image fails to load
+        p.fill(255);
+        p.ellipse(0, 0, 10);
       }
       p.pop();
 
-      if (t.y > p.height + 50) targets.splice(i, 1);
+      if (t.y > p.height + 50) {
+        // If the one we missed was the target, lose a life
+        if (t.type === targetType && lives > 0) {
+          lives--;
+        }
+        targets.splice(i, 1);
+      }
     }
 
-    // 2D Hammer
+    // --- 2D HAMMER ---
     p.push();
     p.translate(p.mouseX, p.mouseY);
     p.rotate(-0.4);
@@ -124,6 +211,7 @@ const sketch = (p) => {
           attentiveness = Math.min(100, attentiveness + 15);
         } else {
           attentiveness -= 20;
+          if (lives > 0) lives--;
         }
         targets.splice(i, 1);
         break;
@@ -132,7 +220,6 @@ const sketch = (p) => {
   };
 };
 
-// --- SHADERS ---
 const grassVertex = `
   varying vec2 vUv;
   uniform float uTime;
@@ -152,18 +239,16 @@ const grassFragment = `
   }
 `;
 
-// --- WORLD GENERATION ---
 const createClouds = (group) => {
   const cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
   const thickness = 2; 
-  const cloudMeshes = Array.from({ length: 20 }).map(() => {
+  for (let i = 0; i < 20; i++) {
     const w = 10 + Math.random() * 20;
     const d = 10 + Math.random() * 20;
     const cloud = new THREE.Mesh(new THREE.BoxGeometry(w, thickness, d), cloudMaterial);
     cloud.position.set((Math.random() - 0.5) * 280, 35, (Math.random() - 0.5) * 300);
-    return cloud;
-  });
-  group.add(...cloudMeshes); 
+    group.add(cloud);
+  }
 };
 
 const createWorldChunk = (zOffset) => {
@@ -195,7 +280,6 @@ const createWorldChunk = (zOffset) => {
   return group;
 };
 
-// --- CORE LOGIC ---
 async function getCachedGLTF(file) {
   if (!glbCache.has(file)) glbCache.set(file, await loader.loadAsync(file));
   return glbCache.get(file);
@@ -220,15 +304,19 @@ async function swapCharacter(file, isDeathAnimation = false) {
 }
 
 function init() {
+  if (!canvas || !container) return; // Safety check
   scene = new THREE.Scene();
   const skyColor = 0x87CEFA;
   scene.background = new THREE.Color(skyColor);
   scene.fog = new THREE.Fog(skyColor, 150, 350);
-  camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  
+  camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
   camera.position.set(0, 4.5, 13); 
   camera.lookAt(0, 1, -5);
+  
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setSize(container.clientWidth, container.clientHeight);
 
   const lights = [
     new THREE.AmbientLight(0xffffff, 1.8),
@@ -237,7 +325,6 @@ function init() {
   lights[1].position.set(0, 50, 0);
   scene.add(...lights);
 
-  // Re-added Clouds
   const cloudGroup = new THREE.Group();
   createClouds(cloudGroup);
   scene.add(cloudGroup);
@@ -251,12 +338,14 @@ function init() {
   playerAnchor = new THREE.Group();
   scene.add(playerAnchor);
 
-  new ResizeObserver(() => {
+  const ro = new ResizeObserver(() => {
+    if (!container || !renderer) return;
     const { width, height } = container.getBoundingClientRect();
     renderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-  }).observe(container);
+  });
+  ro.observe(container);
 }
 
 async function spawn() {
@@ -274,8 +363,11 @@ async function spawn() {
 }
 
 function update() {
-  const delta = clock.getDelta();
-  uTime.value = clock.getElapsedTime();
+  const now = performance.now();
+  const delta = (now - lastTime) / 1000;
+  lastTime = now;
+
+  uTime.value += delta;
   if (currentMixer) currentMixer.update(delta);
   if (!isPlaying) return;
 
@@ -285,10 +377,17 @@ function update() {
     return;
   }
 
-  const moveStep = CONFIG.speed * delta;
-  score++;
+  // Increase speed over time, but cap it at MAX_SPEED
+  if (currentSpeed < CONFIG.MAX_SPEED) {
+    currentSpeed += CONFIG.ACCELERATION * delta;
+  }
+
+  const moveStep = currentSpeed * delta;
+  score += Math.floor(currentSpeed / 40);
+
   attentiveness -= 0.05;
-  if (attentiveness <= 0) triggerGameOver();
+  // --- NEW: Trigger game over if hearts run out or attention hits zero ---
+  if (lives <= 0) triggerGameOver();
 
   CHUNKS.forEach(chunk => {
     chunk.position.z += moveStep;
@@ -311,11 +410,19 @@ function update() {
     return obj;
   }).filter(obj => {
     const active = obj.mesh.position.z < 25;
-    if (!active) { scene.remove(obj.mesh); attentiveness = Math.min(100, attentiveness + 2); }
+    if (!active) { 
+      scene.remove(obj.mesh); 
+      attentiveness = Math.min(100, attentiveness + 2); 
+    }
     return active;
   });
 
-  if (score % 30 === 0) spawn();
+  // --- ROBUST SPAWN LOGIC ---
+  spawnDistanceTracker += moveStep; 
+  if (spawnDistanceTracker >= SPAWN_INTERVAL) {
+    spawn();
+    spawnDistanceTracker = 0; // Reset the tracker
+  }
 }
 
 function triggerGameOver() {
@@ -325,10 +432,16 @@ function triggerGameOver() {
 }
 
 async function startGame() {
+  if (!scene) return;
+  currentSpeed = CONFIG.START_SPEED;
+  // Choose a random target type for this mission
+  const types = ["NEURON", "SUGAR", "GLITCH"];
+  targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
   worldObjects = [];
   targets = [];
-  score = 0; attentiveness = 100; isPlaying = true; gameOver = false; startScreen = false;
+  spawnDistanceTracker = 0;
+  score = 0; attentiveness = 100; isPlaying = true; gameOver = false; startScreen = false; lives = 5; // Reset lives
   gamePhase = "INSTRUCTIONS"; instructionTimer = 3;
   lane = 0; currX = 0; isJumping = false; jumpV = 0; playerY = 0; isDying = false;
   CHUNKS.forEach((chunk, i) => { chunk.position.z = -i * CHUNK_SIZE; });
@@ -349,44 +462,45 @@ const handleKeyDown = (e) => {
 };
 
 onMount(() => {
-  init();
-  p5Instance = new p5(sketch, p5Container);
-  const loop = () => { animationFrame = requestAnimationFrame(loop); update(); renderer.render(scene, camera); };
-  loop();
   window.addEventListener("keydown", handleKeyDown);
   return () => { 
     cancelAnimationFrame(animationFrame); 
     window.removeEventListener("keydown", handleKeyDown);
     if (p5Instance) p5Instance.remove();
+    if (renderer) renderer.dispose();
   };
 });
 </script>
 
+{#if showLanding}
+  <LandingPage onStart={handleStart} />
+{:else}
+  <div id="wrapper" bind:this={container}>
+    <canvas bind:this={canvas}></canvas>
+    <div class="p5-hud" bind:this={p5Container}></div> 
+    {#if hitFlash} <div class="flash"></div> {/if}
+    <div class="ui">
+      <div class="score">{score}</div>
+      {#if gameOver}
+        <div class="modal">
+          <h1>NEURO BREAK</h1>
+          <p>Final Score: {score}</p>
+          <button on:click={startGame}>RETRY</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <style>
   :global(body, html) { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #8cd0f8; cursor: none; }
-  #wrapper { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #wrapper { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; width: 100vw; height: 100vh; }
   canvas { width: 100% !important; height: 100% !important; display: block; }
-  .p5-hud { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 10; width: 100%; height: 100%; }
-  .ui { position: absolute; inset: 0; pointer-events: none; color: white; text-align: center; font-family: 'Segoe UI', sans-serif; }
+  .p5-hud { position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 10; width: 100%; height: 100%; }
+  .ui { position: absolute; inset: 0; pointer-events: none; color: white; text-align: center; font-family: 'Segoe UI', sans-serif;z-index: 11 }
   .score { font-size: 2.5rem; margin-top: 60px; font-weight: 800; text-shadow: 0 4px 10px rgba(0,0,0,0.2); }
   .modal { pointer-events: auto; background: rgba(255, 255, 255, 0.98); padding: 50px; border-radius: 30px; margin-top: 10vh; color: #1e2b21; display: inline-block; box-shadow: 0 25px 60px rgba(0,0,0,0.15); }
   button { padding: 18px 50px; background: #1e2b21; color: white; border: none; border-radius: 15px; cursor: pointer; font-weight: bold; font-size: 1.2rem; transition: all 0.2s; }
   button:hover { transform: translateY(-3px); background: #2b3d2f; }
   .flash { position: absolute; inset: 0; background: white; z-index: 20; pointer-events: none; }
 </style>
-
-<div id="wrapper" bind:this={container}>
-  <canvas bind:this={canvas}></canvas>
-  <div class="p5-hud" bind:this={p5Container}></div> 
-  {#if hitFlash} <div class="flash"></div> {/if}
-  <div class="ui">
-    <div class="score">{score}</div>
-    {#if startScreen || gameOver}
-      <div class="modal">
-        <h1 style="margin: 0 0 10px 0; font-size: 2.5rem;">{gameOver ? "NEURO BREAK" : "NEURO RUNNER"}</h1>
-        <p style="margin-bottom: 35px; font-size: 1.1rem; opacity: 0.7;">{gameOver ? "Final Score: " + score : "Ready to focus?"}</p>
-        <button on:click={startGame}>{gameOver ? "RETRY" : "START RUN"}</button>
-      </div>
-    {/if}
-  </div>
-</div>
