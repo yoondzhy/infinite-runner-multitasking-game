@@ -22,7 +22,7 @@ async function handleStart() {
   
   init();
   p5Instance = new p5(sketch, p5Container);
-  
+  lastTime = performance.now();// Ensure lastTime is reset to "now" so delta doesn't jump
   // Start the game logic
   startGame();
   
@@ -120,6 +120,11 @@ const glbCache = new Map();
 
 let textures = {};
 
+let scoreMultiplier = 1;
+let multiplierTimer = 0; // Remaining seconds of boost
+let lastStarScore = 0; // Add this line to prevent the crash
+const BOOST_DURATION = 20; // 20 seconds
+
 const sketch = (p) => {
   // --- FOOLPROOF IMAGE LOADER ---
   p.setup = async () => {
@@ -132,8 +137,9 @@ const sketch = (p) => {
     });
 
     textures.STRAWBERRY = await loadImg('strawberry.png');
-    textures.BANANA = await loadImg('banana.png');
+    textures.WATERMELON = await loadImg('watermelon.png');
     textures.BLUEBERRY = await loadImg('blubb.png');
+    textures.STAR = await loadImg('star.png');
   };
 
   const drawHeart = (x, y, size, active) => {
@@ -153,6 +159,37 @@ const sketch = (p) => {
   p.draw = () => {
     p.clear();
     if (!isPlaying) return;
+
+    // --- MULTIPLIER HUD ---
+    if (multiplierTimer > 0) {
+      p.push();
+      p.fill(255, 215, 0); // Golden color
+      p.textSize(24);
+      p.textStyle(p.BOLD);
+      p.textAlign(p.RIGHT);
+      p.text(`BOOST: ${Math.ceil(multiplierTimer)}s`, p.width - 20, 100);
+      p.pop();
+      
+      // Optional: Add a subtle golden border to the screen
+      p.noFill();
+      p.stroke(255, 215, 0, 100);
+      p.strokeWeight(10);
+      p.rect(0, 0, p.width, p.height);
+    }
+
+    // Inside p.draw, near your other spawning logic
+    if (score > 0 && score % 10000 < 50 && score - lastStarScore >= 10000) {
+      lastStarScore = score;
+      targets.push({
+        x: -50, // Start off-screen left
+        y: p.random(p.height * 0.2, p.height * 0.5), // Random vertical height
+        type: "STAR",
+        speedX: p.random(6, 9), // Fly fast horizontally
+        speedY: 0,
+        rot: 0
+      });
+    }
+
     if (gamePhase === "INSTRUCTIONS") {
       p.fill(0, 200); // Darken background
       p.rect(0, 0, p.width, p.height);
@@ -190,7 +227,7 @@ const sketch = (p) => {
 
 
     if (p.random(1) < 0.004) {
-      const types = ["STRAWBERRY", "BANANA", "BLUEBERRY"];
+      const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"];
       targets.push({
         x: p.random(p.width * 0.2, p.width * 0.8),
         y: -50,
@@ -199,11 +236,33 @@ const sketch = (p) => {
         rot: 0
       });
     }
+
+    // Inside p.draw(), top-left corner
+    p.push();
+    p.fill(0, 150); // Translucent dark background
+    p.rect(10, 60, 120, 140, 15); 
+    p.fill(255);
+    p.textSize(14);
+    p.textAlign(p.CENTER);
+    p.text("CURRENT TARGET", 70, 85);
+
+    const targetImg = textures[targetType];
+    if (targetImg) {
+      p.image(targetImg, 70, 135, 60, 60);
+    }
+    p.fill(0, 255, 200);
+    p.text(targetType, 70, 185);
+    p.pop();
     
     // --- RENDER IMAGES ---
     for (let i = targets.length - 1; i >= 0; i--) {
       let t = targets[i];
-      t.y += t.speed;
+      if (t.type === "STAR") {
+        t.x += t.speedX; // Move horizontal
+      } else {
+        t.y += t.speed;  // Move vertical
+      }
+
       t.rot += 0.02;
 
       p.push();
@@ -215,15 +274,12 @@ const sketch = (p) => {
       const img = textures[t.type];
       if (img) {
         // Draw the image. Scale it to 40x40 pixels (adjust as needed)
-        p.image(img, 0, 0, 60, 60);
-      } else {
-        // Fallback: draw a small circle if image fails to load
-        p.fill(255);
-        p.ellipse(0, 0, 10);
-      }
+        const size = t.type === "STAR" ? 120 : 100;
+        p.image(img, 0, 0, size, size);
+      } 
       p.pop();
 
-      if (t.y > p.height + 50) {
+      if (t.y > p.height + 50 || t.x > p.width + 50) {
         // If the one we missed was the target, lose a life
         if (t.type === targetType && lives > 0) {
           lives--;
@@ -235,6 +291,7 @@ const sketch = (p) => {
     // --- RENDER FLOATING SCORE POPUPS ---
     for (let i = scorePopups.length - 1; i >= 0; i--) {
       let pop = scorePopups[i];
+      if (!pop.val) continue; // Safety check: skip if value is missing
       
       p.push();
       p.textAlign(p.CENTER);
@@ -243,7 +300,7 @@ const sketch = (p) => {
       
       // Yellow color with fading alpha
       p.fill(255, 230, 0, pop.opacity);
-      p.text("+100", pop.x, pop.y);
+      p.text(pop.val, pop.x, pop.y);
       p.pop();
 
       // Animate: Move up and fade out
@@ -272,17 +329,18 @@ const sketch = (p) => {
     if (gamePhase !== "PLAYING") return;
     for (let i = targets.length - 1; i >= 0; i--) {
       let t = targets[i];
-      if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 40) {
+      if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 60) {
         if (t.type === targetType) {
-          score += 100;
-          // Create a floating score popup
-          scorePopups.push({
-            x: t.x,
-            y: t.y,
-            opacity: 255,
-            life: 1 
-          });
-        } else {
+          // Apply multiplier to normal hits
+          const gain = 100 * scoreMultiplier;
+          score += gain;
+          scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: `+${gain}` });
+        } else if(t.type === "STAR") {
+          // Trigger the 2x Boost
+          scoreMultiplier = 2;
+          multiplierTimer = BOOST_DURATION;
+          scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: "X2 BOOST!" });
+        }else {
           if (lives > 0) lives--;
         }
         targets.splice(i, 1);
@@ -384,9 +442,9 @@ function init() {
   scene.background = new THREE.Color(skyColor);
   scene.fog = new THREE.Fog(skyColor, 150, 350);
   
-  camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
-  camera.position.set(0, 4.5, 13); 
-  camera.lookAt(0, 1, -5);
+  camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.2, 1000);
+  camera.position.set(0, 5.5, 13); 
+  camera.lookAt(0, -1, -5);
   
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -446,17 +504,41 @@ function init() {
 }
 
 async function spawn() {
-  const l = Math.floor(Math.random() * 5) - 2;
-  const source = await getCachedGLTF("Simple computer.glb");
+const l = Math.floor(Math.random() * 5) - 2;
+  const isRare = Math.random() < 0.2; 
+  const modelFile = isRare ? "bird_in_a_claw_machine.glb" : "Simple computer.glb";
+  
+  const source = await getCachedGLTF(modelFile);
   const model = cloneSkeleton(source.scene);
   const pivot = new THREE.Group();
+  
   pivot.position.set(l * CONFIG.lane, 0, -130);
-  model.position.set(0, 0.6, 0); 
-  model.rotation.y = Math.PI;    
-  model.scale.setScalar(5.5); 
+
+  if (isRare) {
+    model.position.set(0, 3.0, 0); 
+    model.rotation.y = 0; 
+    model.scale.setScalar(0.6); 
+  } else {
+    model.position.set(0, 0.6, 0); 
+    model.rotation.y = Math.PI; 
+    model.scale.setScalar(5.5);
+  }
+  
   pivot.add(model);
   scene.add(pivot);
-  worldObjects = [...worldObjects, { mesh: pivot, lane: l }];
+  
+  // ADD THIS: Save the type so the collision logic knows it's tall
+  worldObjects = [...worldObjects, { mesh: pivot, lane: l, isTall: isRare }];
+  // const source = await getCachedGLTF("Simple computer.glb");
+  // const model = cloneSkeleton(source.scene);
+  // const pivot = new THREE.Group();
+  // pivot.position.set(l * CONFIG.lane, 0, -130);
+  // model.position.set(0, 0.6, 0); 
+  // model.rotation.y = Math.PI;    
+  // model.scale.setScalar(5.5); 
+  // pivot.add(model);
+  // scene.add(pivot);
+  // worldObjects = [...worldObjects, { mesh: pivot, lane: l }];
 }
 
 
@@ -468,6 +550,15 @@ function update() {
   uTime.value += delta;
   if (currentMixer) currentMixer.update(delta);
   if (!isPlaying) return;
+
+  // --- MULTIPLIER COUNTDOWN ---
+  if (multiplierTimer > 0) {
+    multiplierTimer -= delta;
+    if (multiplierTimer <= 0) {
+      multiplierTimer = 0;
+      scoreMultiplier = 1;
+    }
+  }
 
   // --- DAY/NIGHT CYCLE LOGIC START ---
   
@@ -503,7 +594,11 @@ function update() {
   }
 
   const moveStep = currentSpeed * delta;
-  score += Math.floor(currentSpeed / 40);
+  // --- BOOSTED DISTANCE SCORE ---
+  // We apply the multiplier to the floor calculation
+  score += Math.floor((currentSpeed / 40) * scoreMultiplier);
+
+  
 
   if (cloudGroup) {
     // Moving at 40% speed (moveStep * 0.4) creates a nice parallax depth
@@ -539,11 +634,33 @@ function update() {
   }
   playerAnchor.position.y = playerY;
 
+  // worldObjects = worldObjects.map(obj => {
+  //   obj.mesh.position.z += moveStep;
+  //   if (Math.abs(obj.mesh.position.z) < 1.5 && obj.lane === lane && playerY < 1.5) triggerGameOver();
+  //   return obj;
+  // }).filter(obj => {
+  //   const active = obj.mesh.position.z < 25;
+  //   if (!active) scene.remove(obj.mesh);
+  //   return active;
+  // });
+
   worldObjects = worldObjects.map(obj => {
     obj.mesh.position.z += moveStep;
-    if (Math.abs(obj.mesh.position.z) < 1.5 && obj.lane === lane && playerY < 1.5) triggerGameOver();
+
+    // Collision detection
+    const isInLane = obj.lane === lane;
+    const isHitZ = Math.abs(obj.mesh.position.z) < 1.5;
+    
+    // NEW LOGIC: If it's a tall object, playerY doesn't matter. 
+    // If it's a short object (computer), you only hit if playerY < 1.5.
+    const isHitHeight = obj.isTall || playerY < 1.5;
+
+    if (isHitZ && isInLane && isHitHeight) {
+      triggerGameOver();
+    }
     return obj;
   }).filter(obj => {
+    if (!obj) return false;
     const active = obj.mesh.position.z < 25;
     if (!active) scene.remove(obj.mesh);
     return active;
@@ -571,7 +688,7 @@ async function startGame() {
   if (!scene) return;
   currentSpeed = CONFIG.START_SPEED;
   // Choose a random target type for this mission
-  const types = ["STRAWBERRY", "BANANA", "BLUEBERRY"];
+  const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"];
   targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
   worldObjects = [];
@@ -715,7 +832,7 @@ onMount(() => {
     text-align: center; 
     font-size: 0.8rem; 
     letter-spacing: 2px; 
-    color: #00d2ff; /* Change color to cyan to match your theme */
+    color: hsl(308, 100%, 87%); /* Change color to cyan to match your theme */
     text-transform: uppercase;
   }
   
@@ -730,7 +847,7 @@ onMount(() => {
   ul { list-style: none; padding: 0; margin: 0; }
 
   button { width: 100%; padding: 15px; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 1rem; transition: all 0.2s; }
-  .save-btn { background: #00d2ff; color: white; margin-bottom: 5px; }
+  .save-btn { background: #ff4ed3; color: white; margin-bottom: 5px; }
   .retry-btn { background: #1e2b21; color: white; margin-top: 10px; }
   button:hover { transform: translateY(-2px); filter: brightness(1.1); }
   
