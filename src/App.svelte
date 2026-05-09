@@ -107,6 +107,7 @@ let gamePhase = "START";
 let instructionTimer = 3;
 let targetType = "STRAWBERRY"; 
 let targets = [];
+let scorePopups = []; // To track the floating +100 labels
 
 let playerAnchor, currentModel = null, currentMixer = null, swapToken = 0;
 let CHUNKS = [];
@@ -231,6 +232,31 @@ const sketch = (p) => {
       }
     }
 
+    // --- RENDER FLOATING SCORE POPUPS ---
+    for (let i = scorePopups.length - 1; i >= 0; i--) {
+      let pop = scorePopups[i];
+      
+      p.push();
+      p.textAlign(p.CENTER);
+      p.textStyle(p.BOLD);
+      p.textSize(32 + (1 - pop.life) * 20); // Gets bigger as it rises
+      
+      // Yellow color with fading alpha
+      p.fill(255, 230, 0, pop.opacity);
+      p.text("+100", pop.x, pop.y);
+      p.pop();
+
+      // Animate: Move up and fade out
+      pop.y -= 2; 
+      pop.life -= 0.02;
+      pop.opacity = pop.life * 255;
+
+      // Remove when faded
+      if (pop.life <= 0) {
+        scorePopups.splice(i, 1);
+      }
+    }
+
     // --- 2D HAMMER ---
     p.push();
     p.translate(p.mouseX, p.mouseY);
@@ -249,6 +275,13 @@ const sketch = (p) => {
       if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 40) {
         if (t.type === targetType) {
           score += 100;
+          // Create a floating score popup
+          scorePopups.push({
+            x: t.x,
+            y: t.y,
+            opacity: 255,
+            life: 1 
+          });
         } else {
           if (lives > 0) lives--;
         }
@@ -439,7 +472,8 @@ function update() {
   // --- DAY/NIGHT CYCLE LOGIC START ---
   
   // Calculate alpha (0 = Day, 1 = Night) using a sine wave based on score
-  let cycleProgress = (score % (CONFIG.CYCLE_INTERVAL * 2)) / (CONFIG.CYCLE_INTERVAL * 2);
+  // let cycleProgress = (score % (CONFIG.CYCLE_INTERVAL * 2)) / (CONFIG.CYCLE_INTERVAL * 2); 
+  let cycleProgress = (uTime.value % 60) / 60;
   let nightAlpha = Math.pow(Math.sin(cycleProgress * Math.PI), 2); 
 
   // Interpolate Background and Fog colors
@@ -541,7 +575,7 @@ async function startGame() {
   targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
   worldObjects = [];
-  targets = [];
+  targets = []; scorePopups = [];
   spawnDistanceTracker = 0;
   score = 0; isPlaying = true; gameOver = false; startScreen = false; lives = 5; // Reset lives
   gamePhase = "INSTRUCTIONS"; instructionTimer = 3;
@@ -614,7 +648,7 @@ onMount(() => {
       <!-- Game Over Modal -->
       {#if gameOver}
         <div class="modal">
-          <h1>YOU LOST</h1>
+          <h1>GAME OVER</h1>
           <p>Final Score: <strong>{score}</strong></p>
           
           <!-- Only show the save input if they haven't submitted yet -->
