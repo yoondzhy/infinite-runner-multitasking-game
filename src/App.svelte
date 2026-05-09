@@ -80,7 +80,8 @@ const CONFIG = {
   playerScale: 1.7,
   START_SPEED: 45,   // Initial slow speed
   MAX_SPEED: 95,     // The "chaos" threshold
-  ACCELERATION: 1  // Speed added per second
+  ACCELERATION: 1,  // Speed added per second
+  CYCLE_INTERVAL: 7000
 };
 
 let currentSpeed = CONFIG.START_SPEED;
@@ -94,6 +95,12 @@ let isDying = false, hitFlash = false;
 
 let spawnDistanceTracker = 0;
 const SPAWN_INTERVAL = 40; // Physical distance between obstacles
+let cloudGroup;
+let skyColors = {
+  day: new THREE.Color(0x87CEFA),
+  night: new THREE.Color(0x02050a)
+};
+let sun, moon, ambientLight, sunLight, headLight;
 
 // 2D Game Logic
 let gamePhase = "START"; 
@@ -119,8 +126,6 @@ const sketch = (p) => {
     const h = container?.clientHeight || p.windowHeight;
     p.createCanvas(w, h);
 
-    // Load images and store them in the textures object
-    // Using p.loadImage with a promise-like approach
     const loadImg = (path) => new Promise(resolve => {
       p.loadImage(path, img => resolve(img), () => resolve(null));
     });
@@ -130,7 +135,6 @@ const sketch = (p) => {
     textures.BLUEBERRY = await loadImg('blubb.png');
   };
 
-  // --- NEW: Function to draw a pixelated heart ---
   const drawHeart = (x, y, size, active) => {
       p.push();
       p.noStroke();
@@ -148,7 +152,6 @@ const sketch = (p) => {
   p.draw = () => {
     p.clear();
     if (!isPlaying) return;
-
     if (gamePhase === "INSTRUCTIONS") {
       p.fill(0, 200); // Darken background
       p.rect(0, 0, p.width, p.height);
@@ -184,7 +187,7 @@ const sketch = (p) => {
       drawHeart(20 + (i * 35), 20, 25, i < lives);
     }
 
-    // Spawning Logic (keeping your random chance)
+
     if (p.random(1) < 0.004) {
       const types = ["STRAWBERRY", "BANANA", "BLUEBERRY"];
       targets.push({
@@ -195,7 +198,7 @@ const sketch = (p) => {
         rot: 0
       });
     }
-
+    
     // --- RENDER IMAGES ---
     for (let i = targets.length - 1; i >= 0; i--) {
       let t = targets[i];
@@ -246,9 +249,7 @@ const sketch = (p) => {
       if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 40) {
         if (t.type === targetType) {
           score += 100;
-          attentiveness = Math.min(100, attentiveness + 15);
         } else {
-          attentiveness -= 20;
           if (lives > 0) lives--;
         }
         targets.splice(i, 1);
@@ -277,6 +278,7 @@ const grassFragment = `
   }
 `;
 
+
 const createClouds = (group) => {
   const cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
   const thickness = 2; 
@@ -284,7 +286,8 @@ const createClouds = (group) => {
     const w = 10 + Math.random() * 20;
     const d = 10 + Math.random() * 20;
     const cloud = new THREE.Mesh(new THREE.BoxGeometry(w, thickness, d), cloudMaterial);
-    cloud.position.set((Math.random() - 0.5) * 280, 35, (Math.random() - 0.5) * 300);
+    const y = 30 + Math.random() * 25;
+    cloud.position.set((Math.random() - 0.5) * 280, y, (Math.random() - 0.5) * 300);
     group.add(cloud);
   }
 };
@@ -363,7 +366,7 @@ function init() {
   lights[1].position.set(0, 50, 0);
   scene.add(...lights);
 
-  const cloudGroup = new THREE.Group();
+  cloudGroup = new THREE.Group();
   createClouds(cloudGroup);
   scene.add(cloudGroup);
 
@@ -384,6 +387,29 @@ function init() {
     camera.updateProjectionMatrix();
   });
   ro.observe(container);
+
+  // 1. Update Fog to use the day color
+  scene.fog = new THREE.Fog(skyColors.day, 150, 300);
+
+  // 2. Setup Lights
+  ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+  sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  sunLight.position.set(0, 50, -50);
+  
+  // 3. Add the "Headlight" to the camera (stays off during day)
+  headLight = new THREE.PointLight(0x00d2ff, 0, 40);
+  camera.add(headLight);
+  scene.add(camera, ambientLight, sunLight);
+
+  // 4. Create Low-Poly Sun and Moon
+  const lowPolyGeo = new THREE.IcosahedronGeometry(10, 1);
+  sun = new THREE.Mesh(lowPolyGeo, new THREE.MeshBasicMaterial({ color: 0xffffcc }));
+  moon = new THREE.Mesh(lowPolyGeo, new THREE.MeshBasicMaterial({ color: 0x94b0ff }));
+  
+  // Position them at opposite poles
+  sun.position.set(60, 100, -250);
+  moon.position.set(60, -100, -250);
+  scene.add(sun, moon);
 }
 
 async function spawn() {
@@ -400,6 +426,7 @@ async function spawn() {
   worldObjects = [...worldObjects, { mesh: pivot, lane: l }];
 }
 
+
 function update() {
   const now = performance.now();
   const delta = (now - lastTime) / 1000;
@@ -409,13 +436,34 @@ function update() {
   if (currentMixer) currentMixer.update(delta);
   if (!isPlaying) return;
 
+  // --- DAY/NIGHT CYCLE LOGIC START ---
+  
+  // Calculate alpha (0 = Day, 1 = Night) using a sine wave based on score
+  let cycleProgress = (score % (CONFIG.CYCLE_INTERVAL * 2)) / (CONFIG.CYCLE_INTERVAL * 2);
+  let nightAlpha = Math.pow(Math.sin(cycleProgress * Math.PI), 2); 
+
+  // Interpolate Background and Fog colors
+  const currentSky = skyColors.day.clone().lerp(skyColors.night, nightAlpha);
+  scene.background.copy(currentSky);
+  scene.fog.color.copy(currentSky);
+  
+  // Adjust Light Intensities
+  ambientLight.intensity = THREE.MathUtils.lerp(1.5, 0.2, nightAlpha);
+  sunLight.intensity = THREE.MathUtils.lerp(1.0, 0.1, nightAlpha);
+  headLight.intensity = THREE.MathUtils.lerp(0, 2.5, nightAlpha); 
+
+  // Move Sun and Moon (Sun goes down, Moon comes up)
+  sun.position.y = THREE.MathUtils.lerp(100, -100, nightAlpha);
+  moon.position.y = THREE.MathUtils.lerp(-100, 100, nightAlpha);
+
+  // --- DAY/NIGHT CYCLE LOGIC END ---
+
   if (gamePhase === "INSTRUCTIONS") {
     instructionTimer -= delta;
     if (instructionTimer <= 0) gamePhase = "PLAYING";
     return;
   }
 
-  // Increase speed over time, but cap it at MAX_SPEED
   if (currentSpeed < CONFIG.MAX_SPEED) {
     currentSpeed += CONFIG.ACCELERATION * delta;
   }
@@ -423,8 +471,19 @@ function update() {
   const moveStep = currentSpeed * delta;
   score += Math.floor(currentSpeed / 40);
 
-  attentiveness -= 0.05;
-  // --- NEW: Trigger game over if hearts run out or attention hits zero ---
+  if (cloudGroup) {
+    // Moving at 40% speed (moveStep * 0.4) creates a nice parallax depth
+    cloudGroup.children.forEach(cloud => {
+      cloud.position.z += moveStep * 0.4; 
+
+      // Reset cloud position if it goes too far behind the camera
+      if (cloud.position.z > 50) {
+        cloud.position.z = -250;
+        cloud.position.x = (Math.random() - 0.5) * 280; // Randomize X again for variety
+      }
+    });
+  }
+
   if (lives <= 0) triggerGameOver();
 
   CHUNKS.forEach(chunk => {
@@ -438,7 +497,11 @@ function update() {
   if (isJumping) {
     jumpV -= CONFIG.grav;
     playerY += jumpV;
-    if (playerY <= 0) { playerY = 0; isJumping = false; if (!isDying) swapCharacter("Running.glb"); }
+    if (playerY <= 0) { 
+      playerY = 0; 
+      isJumping = false; 
+      if (!isDying) swapCharacter("Running.glb"); 
+    }
   }
   playerAnchor.position.y = playerY;
 
@@ -448,20 +511,19 @@ function update() {
     return obj;
   }).filter(obj => {
     const active = obj.mesh.position.z < 25;
-    if (!active) { 
-      scene.remove(obj.mesh); 
-      attentiveness = Math.min(100, attentiveness + 2); 
-    }
+    if (!active) scene.remove(obj.mesh);
     return active;
   });
 
-  // --- ROBUST SPAWN LOGIC ---
-  spawnDistanceTracker += moveStep; 
+  // Normal Obstacle Spawning
+  spawnDistanceTracker += moveStep;
   if (spawnDistanceTracker >= SPAWN_INTERVAL) {
     spawn();
-    spawnDistanceTracker = 0; // Reset the tracker
+    spawnDistanceTracker = 0;
+  
   }
 }
+
 
 function triggerGameOver() {
   isPlaying = false; gameOver = true; isDying = true; hitFlash = true;
@@ -481,7 +543,7 @@ async function startGame() {
   worldObjects = [];
   targets = [];
   spawnDistanceTracker = 0;
-  score = 0; attentiveness = 100; isPlaying = true; gameOver = false; startScreen = false; lives = 5; // Reset lives
+  score = 0; isPlaying = true; gameOver = false; startScreen = false; lives = 5; // Reset lives
   gamePhase = "INSTRUCTIONS"; instructionTimer = 3;
   lane = 0; currX = 0; isJumping = false; jumpV = 0; playerY = 0; isDying = false;
   CHUNKS.forEach((chunk, i) => { chunk.position.z = -i * CHUNK_SIZE; });
@@ -493,10 +555,10 @@ const handleKeyDown = (e) => {
   const actions = {
     ArrowLeft: () => lane > -2 && lane--, a: () => lane > -2 && lane--, A: () => lane > -2 && lane--,
     ArrowRight: () => lane < 2 && lane++, d: () => lane < 2 && lane++, D: () => lane < 2 && lane++,
-    " ": () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jumping.glb")),
-    ArrowUp: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jumping.glb")),
-    w: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jumping.glb")),
-    W: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jumping.glb"))
+    " ": () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
+    ArrowUp: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
+    w: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
+    W: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb"))
   };
   actions[e.key]?.();
 };
@@ -525,7 +587,7 @@ onMount(() => {
     
     {#if hitFlash} <div class="flash"></div> {/if}
 
-    <!-- 1. NEW TOP-RIGHT LEADERBOARD -->
+    <!-- TOP-RIGHT LEADERBOARD  -->
     <div class="side-hud">
       <div class="leaderboard-view">
         <h3>TOP RUNNERS</h3>
@@ -584,9 +646,7 @@ onMount(() => {
   .p5-hud { position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 10; width: 100%; height: 100%; }
   .ui { position: absolute; inset: 0; pointer-events: none; color: white; text-align: center; font-family: 'Segoe UI', sans-serif; z-index: 11 }
   .score { font-size: 2.5rem; margin-top: 60px; font-weight: 800; text-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-  
   .modal { pointer-events: auto; background: rgba(255, 255, 255, 0.98); padding: 40px; border-radius: 30px; margin-top: 5vh; color: #1e2b21; display: inline-block; box-shadow: 0 25px 60px rgba(0,0,0,0.15); width: 320px; }
-  
   .leaderboard-entry { margin: 20px 0; }
   input { width: 80%; padding: 12px; border: 2px solid #eee; border-radius: 10px; font-family: inherit; font-weight: bold; text-align: center; margin-bottom: 10px; }
   
