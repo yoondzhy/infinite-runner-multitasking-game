@@ -8,9 +8,12 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 let showLanding = true;
-
-// Fix for Clock deprecation warning
 let lastTime = performance.now();
+
+// --- LEADERBOARD STATE ---
+let leaderboard = [];
+let playerName = "";
+let hasSubmitted = false;
 
 async function handleStart() {
   showLanding = false;
@@ -34,7 +37,42 @@ async function handleStart() {
   loop();
 }
 
-// Change CONFIG to include speed limits
+// --- LEADERBOARD LOGIC ---
+function saveScore() {
+  if (hasSubmitted) return;
+  
+  const name = playerName.trim() || "Anonymous";
+  let currentBoard = JSON.parse(localStorage.getItem("neuro_leaderboard") || "[]");
+
+  // Check if this player already has a record (case-insensitive)
+  const existingIndex = currentBoard.findIndex(
+    entry => entry.name.toLowerCase() === name.toLowerCase()
+  );
+
+  if (existingIndex !== -1) {
+    // Only update if the new score is actually higher
+    if (score > currentBoard[existingIndex].score) {
+      currentBoard[existingIndex].score = score;
+    }
+  } else {
+    // New player, just add them
+    currentBoard.push({ name: name, score: score });
+  }
+
+  // Sort by highest score first and keep only top 5
+  currentBoard.sort((a, b) => b.score - a.score);
+  currentBoard = currentBoard.slice(0, 5); 
+  
+  localStorage.setItem("neuro_leaderboard", JSON.stringify(currentBoard));
+  leaderboard = currentBoard;
+  hasSubmitted = true;
+  playerName = ""; // Reset for next time
+}
+
+function loadLeaderboard() {
+  leaderboard = JSON.parse(localStorage.getItem("neuro_leaderboard") || "[]");
+}
+
 const CONFIG = { 
   lane: 2.5, 
   jump: 0.35, 
@@ -42,13 +80,13 @@ const CONFIG = {
   playerScale: 1.7,
   START_SPEED: 45,   // Initial slow speed
   MAX_SPEED: 95,     // The "chaos" threshold
-  ACCELERATION: 1.5  // Speed added per second
+  ACCELERATION: 1  // Speed added per second
 };
 
 let currentSpeed = CONFIG.START_SPEED;
 let score = 0, isPlaying = false, gameOver = false, startScreen = true;
 let attentiveness = 100;
-let lives = 5; // --- NEW: Lives tracker ---
+let lives = 5;
 let lane = 0, currX = 0, isJumping = false, jumpV = 0, playerY = 0;
 let container, canvas, scene, camera, renderer, p5Container;
 let worldObjects = [], animationFrame, p5Instance;
@@ -60,7 +98,7 @@ const SPAWN_INTERVAL = 40; // Physical distance between obstacles
 // 2D Game Logic
 let gamePhase = "START"; 
 let instructionTimer = 3;
-let targetType = "NEURON"; 
+let targetType = "STRAWBERRY"; 
 let targets = [];
 
 let playerAnchor, currentModel = null, currentMixer = null, swapToken = 0;
@@ -87,9 +125,9 @@ const sketch = (p) => {
       p.loadImage(path, img => resolve(img), () => resolve(null));
     });
 
-    textures.NEURON = await loadImg('strawberry.png');
-    textures.SUGAR = await loadImg('banana.png');
-    textures.GLITCH = await loadImg('blubb.png');
+    textures.STRAWBERRY = await loadImg('strawberry.png');
+    textures.BANANA = await loadImg('banana.png');
+    textures.BLUEBERRY = await loadImg('blubb.png');
   };
 
   // --- NEW: Function to draw a pixelated heart ---
@@ -122,7 +160,7 @@ const sketch = (p) => {
       
       // The Mission Text
       p.textSize(28);
-      p.text(`NEURO-MISSION: COLLECT`, p.width / 2, p.height / 2 - 100);
+      p.text(`MISSION: COLLECT`, p.width / 2, p.height / 2 - 100);
       
       // Draw the target icon to collect
       const targetImg = textures[targetType];
@@ -148,7 +186,7 @@ const sketch = (p) => {
 
     // Spawning Logic (keeping your random chance)
     if (p.random(1) < 0.004) {
-      const types = ["NEURON", "SUGAR", "GLITCH"];
+      const types = ["STRAWBERRY", "BANANA", "BLUEBERRY"];
       targets.push({
         x: p.random(p.width * 0.2, p.width * 0.8),
         y: -50,
@@ -427,6 +465,8 @@ function update() {
 
 function triggerGameOver() {
   isPlaying = false; gameOver = true; isDying = true; hitFlash = true;
+  hasSubmitted = false; // Allow a new submission for this game over
+  loadLeaderboard();    // Refresh board to show latest rankings
   swapCharacter("Falling Back Death.glb", true); 
   setTimeout(() => hitFlash = false, 150);
 }
@@ -435,7 +475,7 @@ async function startGame() {
   if (!scene) return;
   currentSpeed = CONFIG.START_SPEED;
   // Choose a random target type for this mission
-  const types = ["NEURON", "SUGAR", "GLITCH"];
+  const types = ["STRAWBERRY", "BANANA", "BLUEBERRY"];
   targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
   worldObjects = [];
@@ -462,6 +502,7 @@ const handleKeyDown = (e) => {
 };
 
 onMount(() => {
+  loadLeaderboard();
   window.addEventListener("keydown", handleKeyDown);
   return () => { 
     cancelAnimationFrame(animationFrame); 
@@ -476,16 +517,60 @@ onMount(() => {
   <LandingPage onStart={handleStart} />
 {:else}
   <div id="wrapper" bind:this={container}>
+    <!-- The 3D Game World -->
     <canvas bind:this={canvas}></canvas>
+    
+    <!-- The 2D P5.js Overlay (Hearts, Hammer, Fruit) -->
     <div class="p5-hud" bind:this={p5Container}></div> 
+    
     {#if hitFlash} <div class="flash"></div> {/if}
+
+    <!-- 1. NEW TOP-RIGHT LEADERBOARD -->
+    <div class="side-hud">
+      <div class="leaderboard-view">
+        <h3>TOP RUNNERS</h3>
+        <ul>
+          {#if leaderboard.length > 0}
+            {#each leaderboard as entry, i}
+              <li>
+                <span>{i + 1}. {entry.name}</span> 
+                <span>{entry.score}</span>
+              </li>
+            {/each}
+          {:else}
+            <li style="opacity: 0.5; justify-content: center;">No scores yet</li>
+          {/if}
+        </ul>
+      </div>
+    </div>
+
+    <!-- 2. GAME UI OVERLAY -->
     <div class="ui">
+      <!-- Live Score -->
       <div class="score">{score}</div>
+
+      <!-- Game Over Modal -->
       {#if gameOver}
         <div class="modal">
-          <h1>NEURO BREAK</h1>
-          <p>Final Score: {score}</p>
-          <button on:click={startGame}>RETRY</button>
+          <h1>YOU LOST</h1>
+          <p>Final Score: <strong>{score}</strong></p>
+          
+          <!-- Only show the save input if they haven't submitted yet -->
+          {#if !hasSubmitted}
+            <div class="leaderboard-entry">
+              <input 
+                type="text" 
+                bind:value={playerName} 
+                placeholder="ENTER NAME" 
+                maxlength="10" 
+              />
+              <button class="save-btn" on:click={saveScore}>SAVE TO BOARD</button>
+            </div>
+          {:else}
+            <p class="saved-msg">SCORE SAVED!</p>
+          {/if}
+          
+          <button class="retry-btn" on:click={startGame}>PLAY AGAIN</button>
         </div>
       {/if}
     </div>
@@ -497,10 +582,63 @@ onMount(() => {
   #wrapper { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; width: 100vw; height: 100vh; }
   canvas { width: 100% !important; height: 100% !important; display: block; }
   .p5-hud { position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 10; width: 100%; height: 100%; }
-  .ui { position: absolute; inset: 0; pointer-events: none; color: white; text-align: center; font-family: 'Segoe UI', sans-serif;z-index: 11 }
+  .ui { position: absolute; inset: 0; pointer-events: none; color: white; text-align: center; font-family: 'Segoe UI', sans-serif; z-index: 11 }
   .score { font-size: 2.5rem; margin-top: 60px; font-weight: 800; text-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-  .modal { pointer-events: auto; background: rgba(255, 255, 255, 0.98); padding: 50px; border-radius: 30px; margin-top: 10vh; color: #1e2b21; display: inline-block; box-shadow: 0 25px 60px rgba(0,0,0,0.15); }
-  button { padding: 18px 50px; background: #1e2b21; color: white; border: none; border-radius: 15px; cursor: pointer; font-weight: bold; font-size: 1.2rem; transition: all 0.2s; }
-  button:hover { transform: translateY(-3px); background: #2b3d2f; }
+  
+  .modal { pointer-events: auto; background: rgba(255, 255, 255, 0.98); padding: 40px; border-radius: 30px; margin-top: 5vh; color: #1e2b21; display: inline-block; box-shadow: 0 25px 60px rgba(0,0,0,0.15); width: 320px; }
+  
+  .leaderboard-entry { margin: 20px 0; }
+  input { width: 80%; padding: 12px; border: 2px solid #eee; border-radius: 10px; font-family: inherit; font-weight: bold; text-align: center; margin-bottom: 10px; }
+  
+  /* New Sidebar Container */
+  .side-hud { 
+    position: absolute; 
+    top: 20px; 
+    right: 20px; 
+    width: 220px; 
+    z-index: 15; 
+    pointer-events: none; /* Let clicks pass through to the game if needed */
+  }
+
+  /* Updated Leaderboard View */
+  .leaderboard-view { 
+    background: rgba(255, 255, 255, 0.2); 
+    backdrop-filter: blur(10px); 
+    border: 1px solid rgba(255,255,255,0.3); 
+    border-radius: 15px; 
+    padding: 15px; 
+    text-align: left; 
+    color: white; 
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1); 
+  }
+
+  /* Ensure buttons and inputs still work */
+  input, button {
+    pointer-events: auto; 
+  }
+  .leaderboard-view h3 { 
+    margin-top: 0; 
+    text-align: center; 
+    font-size: 0.8rem; 
+    letter-spacing: 2px; 
+    color: #00d2ff; /* Change color to cyan to match your theme */
+    text-transform: uppercase;
+  }
+  
+  li { 
+    display: flex; 
+    justify-content: space-between; 
+    padding: 5px 0; 
+    border-bottom: 1px solid rgba(255,255,255,0.1); /* Lighter border */
+    font-weight: bold; 
+    font-size: 0.9rem; 
+  }
+  ul { list-style: none; padding: 0; margin: 0; }
+
+  button { width: 100%; padding: 15px; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 1rem; transition: all 0.2s; }
+  .save-btn { background: #00d2ff; color: white; margin-bottom: 5px; }
+  .retry-btn { background: #1e2b21; color: white; margin-top: 10px; }
+  button:hover { transform: translateY(-2px); filter: brightness(1.1); }
+  
   .flash { position: absolute; inset: 0; background: white; z-index: 20; pointer-events: none; }
 </style>
