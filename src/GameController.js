@@ -5,10 +5,13 @@ export function handleInput(event, state, config, swapFn) {
   const actions = {
     ArrowLeft: () => state.lane > -2 && state.lane--,
     a: () => state.lane > -2 && state.lane--,
+    A: () => state.lane > -2 && state.lane--,
     ArrowRight: () => state.lane < 2 && state.lane++,
     d: () => state.lane < 2 && state.lane++,
+    D: () => state.lane < 2 && state.lane++,
     " ": () => !state.isJumping && triggerJump(state, config, swapFn),
     w: () => !state.isJumping && triggerJump(state, config, swapFn),
+    W: () => !state.isJumping && triggerJump(state, config, swapFn),
     ArrowUp: () => !state.isJumping && triggerJump(state, config, swapFn)
   };
 
