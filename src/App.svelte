@@ -6,14 +6,11 @@ import * as THREE from "three";
 import p5 from "p5";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+  
+import { loadLeaderboard, saveScore, playerName, leaderboard , hasSubmitted } from './leaderboard.js';
 
 let showLanding = true;
 let lastTime = performance.now();
-
-// --- LEADERBOARD STATE ---
-let leaderboard = [];
-let playerName = "";
-let hasSubmitted = false;
 
 async function handleStart() {
   showLanding = false;
@@ -37,41 +34,6 @@ async function handleStart() {
   loop();
 }
 
-// --- LEADERBOARD LOGIC ---
-function saveScore() {
-  if (hasSubmitted) return;
-  
-  const name = playerName.trim() || "Anonymous";
-  let currentBoard = JSON.parse(localStorage.getItem("neuro_leaderboard") || "[]");
-
-  // Check if this player already has a record (case-insensitive)
-  const existingIndex = currentBoard.findIndex(
-    entry => entry.name.toLowerCase() === name.toLowerCase()
-  );
-
-  if (existingIndex !== -1) {
-    // Only update if the new score is actually higher
-    if (score > currentBoard[existingIndex].score) {
-      currentBoard[existingIndex].score = score;
-    }
-  } else {
-    // New player, just add them
-    currentBoard.push({ name: name, score: score });
-  }
-
-  // Sort by highest score first and keep only top 5
-  currentBoard.sort((a, b) => b.score - a.score);
-  currentBoard = currentBoard.slice(0, 5); 
-  
-  localStorage.setItem("neuro_leaderboard", JSON.stringify(currentBoard));
-  leaderboard = currentBoard;
-  hasSubmitted = true;
-  playerName = ""; // Reset for next time
-}
-
-function loadLeaderboard() {
-  leaderboard = JSON.parse(localStorage.getItem("neuro_leaderboard") || "[]");
-}
 
 const CONFIG = { 
   lane: 2.5, 
@@ -529,16 +491,6 @@ const l = Math.floor(Math.random() * 5) - 2;
   
   // ADD THIS: Save the type so the collision logic knows it's tall
   worldObjects = [...worldObjects, { mesh: pivot, lane: l, isTall: isRare }];
-  // const source = await getCachedGLTF("Simple computer.glb");
-  // const model = cloneSkeleton(source.scene);
-  // const pivot = new THREE.Group();
-  // pivot.position.set(l * CONFIG.lane, 0, -130);
-  // model.position.set(0, 0.6, 0); 
-  // model.rotation.y = Math.PI;    
-  // model.scale.setScalar(5.5); 
-  // pivot.add(model);
-  // scene.add(pivot);
-  // worldObjects = [...worldObjects, { mesh: pivot, lane: l }];
 }
 
 
@@ -634,16 +586,6 @@ function update() {
   }
   playerAnchor.position.y = playerY;
 
-  // worldObjects = worldObjects.map(obj => {
-  //   obj.mesh.position.z += moveStep;
-  //   if (Math.abs(obj.mesh.position.z) < 1.5 && obj.lane === lane && playerY < 1.5) triggerGameOver();
-  //   return obj;
-  // }).filter(obj => {
-  //   const active = obj.mesh.position.z < 25;
-  //   if (!active) scene.remove(obj.mesh);
-  //   return active;
-  // });
-
   worldObjects = worldObjects.map(obj => {
     obj.mesh.position.z += moveStep;
 
@@ -678,7 +620,7 @@ function update() {
 
 function triggerGameOver() {
   isPlaying = false; gameOver = true; isDying = true; hitFlash = true;
-  hasSubmitted = false; // Allow a new submission for this game over
+  hasSubmitted.set(false); // Allow a new submission for this game over
   loadLeaderboard();    // Refresh board to show latest rankings
   swapCharacter("Falling Back Death.glb", true); 
   setTimeout(() => hitFlash = false, 150);
@@ -743,8 +685,8 @@ onMount(() => {
       <div class="leaderboard-view">
         <h3>TOP RUNNERS</h3>
         <ul>
-          {#if leaderboard.length > 0}
-            {#each leaderboard as entry, i}
+          {#if $leaderboard.length > 0}
+            {#each $leaderboard as entry, i}
               <li>
                 <span>{i + 1}. {entry.name}</span> 
                 <span>{entry.score}</span>
@@ -769,15 +711,15 @@ onMount(() => {
           <p>Final Score: <strong>{score}</strong></p>
           
           <!-- Only show the save input if they haven't submitted yet -->
-          {#if !hasSubmitted}
+          {#if !$hasSubmitted}
             <div class="leaderboard-entry">
               <input 
                 type="text" 
-                bind:value={playerName} 
+                bind:value={$playerName} 
                 placeholder="ENTER NAME" 
                 maxlength="10" 
               />
-              <button class="save-btn" on:click={saveScore}>SAVE TO BOARD</button>
+              <button class="save-btn" on:click={() => saveScore(score)}>SAVE TO BOARD</button>
             </div>
           {:else}
             <p class="saved-msg">SCORE SAVED!</p>
