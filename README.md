@@ -1,62 +1,52 @@
-# My proposal
-
-My name is Makhabbat, and I am a sophomore at KAIST doing my Bachelor's degree in Industrial Design (ID: 20240935). For any questions you can contact me at mako1004@kaist.ac.kr.
-The URL to the git repository with source code: [Overload](https://github.com/yoondzhy/infinite-runner-multitasking-game) and [video demo](https://youtu.be/vDffRuz51hA).
-
-<!-- I want to make atypical infinite runner game usually made for ADHD children. When I was in China, I had a chance to play ADHD-DTx game made for ADHD children and proven to improve their condition. You can't download or even find information about it outside the research paper, so I wanted to make one for myself, cause I drift a lot and would like to train my attention somehow. 
-This is an extreme multitasking game, requiring you to do various things at once and fast.
-The game has 5 lanes instead of typical 3, when game starts there will be text presented about which things you have to be collecting - various things will be falling along the game so you will have to hit only the ones you were instructed to at the beginning of the game,  also one in a while you will have to pass through 'gates' and you're supposed to pass through the one that is answer to the question given several seconds before, you also have to gather basic awards along the lanes and avoid basic obstacles.
-In the original game that we played, there is an EEG headset that goes along the tablet that records the level of attentiveness to track, however I am thinking it can be just a something that gets reduced when you make too many mistakes. 
-I want to make it using three.js, because my reason for taking this course is to eventually be able to use three.js. -->
-
 # Overload: A Multitasking Cognitive Training Game 
 
-Overload is an atypical, **cognitively demanding** _infinite runner_ inspired by digital therapeutics (DTx) designed for children with ADHD.
-In Zhejiang University Summer Program, I had the chance to play a clinically tested ADHD-focused game that significantly improved sustained attention, but the **game isn’t publicly available** and information about it exists only inside [research papers](https://pubmed.ncbi.nlm.nih.gov/41490776/).
-<!-- 
-<img src="./IMG_9134.jpg" width="45%">
-<img src="./IMG_9135.jpg" width="45%"> -->
+**Student:** Makhabbat (ID: 20240935)  
+**Department:** Industrial Design, KAIST  
+**Contact:** [mako1004@kaist.ac.kr](mailto:mako1004@kaist.ac.kr)  
+**Links:** [Git Repository](https://github.com/yoondzhy/infinite-runner-multitasking-game) | [Video Demo](https://youtu.be/vDffRuz51hA)
 
-This project is my attempt to recreate that idea for myself — as someone who often drifts and wants a way to actively train attention through gameplay.
-The result is an extreme multitasking runner built with three.js, designed to **overload** and strengthen attentional control, working memory, and task-switching.
+## Project Overview
 
-# Core Concept
+Overload is an atypical, **cognitively demanding** *infinite runner* inspired by digital therapeutics (DTx) designed for children with ADHD. 
 
-Overload is not a typical runner with 3 lanes — it uses 5 lanes, faster pacing(over time), and continuous task switching.
-Players must constantly track rules and obstacle avoidance at the same time, rewarding precision and penalizing mind-wandering.
+During the Zhejiang University Summer Program, I had the chance to play a clinically tested ADHD-focused game that significantly improved sustained attention. However, the **game isn’t publicly available** and information about it exists only inside [research papers](https://pubmed.ncbi.nlm.nih.gov/41490776/).
 
-The goal is to maintain cognitive engagement.
+This project is my attempt to recreate that idea for myself—as someone who often drifts and wants a way to actively train attention through gameplay. The result is an extreme multitasking runner built with **Three.js**, designed to **overload** and strengthen attentional control, working memory, and task-switching.
 
-# Gameplay Description
+## Core Concept
 
-1. Five-Lane Movement
+Overload is not a typical runner with 3 lanes—it uses **5 lanes**, faster pacing (over time), and continuous task switching. Players must constantly track rules and obstacle avoidance at the same time, rewarding precision and penalizing mind-wandering. The goal is to maintain total cognitive engagement.
 
-    - move between 5 horizontal lanes instead of the standard 3.
-    - forces higher spatial attention.
+## Gameplay Description
 
-2. Instruction Phase & Target Collecting Game
+### 1. Five-Lane Movement
+* Move between 5 horizontal lanes instead of the standard 3.
+* Forces higher spatial attention and faster reaction times.
 
-    At the start of each run:
+### 2. Instruction Phase & Target Collecting
+At the start of each run:
+* The player is shown a **specific type of target item** they must collect.
+* Throughout the game, objects fall randomly on the screen.
+* Players must collect only the instructed items and avoid irrelevant ones using a hammer (the cursor).
+* **Lives:** 5 lives are given for target hitting (top-left corner). Missing or hitting wrong targets reduces these. 
+* *Note: These lives are separate from obstacle collisions, which result in an immediate game over.*
+* **Booster:** A special booster appears every 10,000 points, doubling the general score and target points for 20 seconds.
 
-    - The player is shown a **type of target item they must collect**.
-    - Throughout the game, objects fall randomly on the screen.
-    - Players must collect only the instructed items and avoid irrelevant ones using a hammer which is essentially just the cursor.
-    - There are 5 lives given for target hitting displayed on top left corner, missing or hitting wrong targets leads to losing these lives one by one. However, these lives play no role in hitting obstacles as that is the main game.
-    - There is a special booster target that appears every 10 000 points and boosts by double the amount both the general score and earned score from hitting targets for duration of 20 seconds.
+### 3. Obstacles
+* **Small Computers:** Can be avoided or jumped over.
+* **Tall Claw Machines:** Cannot be jumped over; must be dodged.
+* Hitting any obstacle leads to an immediate game over.
 
-    This trains selective attention and working memory
+---
 
-3. Obstacles
-    - 2 types of obstacles: small computers that can either be avoided or jumped over and taller claw machines that cannot be jumped over
-    - hitting obstacles lead to immediate gameover
+## Library Used
 
-# Library Used
+* **Three.js:** Used for all 3D rendering, including the world environment, character models, and skeletal animations.
+* **p5.js:** Used for the 2D HUD overlay, fruit/target rendering, and the interactive hammer mechanics.
 
-Three.js: Used for all 3D rendering, including the world environment, character models, and skeletal animations.
+---
 
-p5.js: Used for the 2D HUD overlay, fruit/target rendering, and the interactive hammer mechanics.
-
-# The Core Organization (MVC Pattern)
+## The Core Organization (MVC Pattern)
 
 <table>
   <tr>
@@ -83,36 +73,27 @@ To ensure that only a single instance of the game timer (`uTime`), score, and ac
   </tr>
 </table>
 
-# Key functions and modules
-**GameManager.js / GameController.js**
-These act as the "Brain."
+### Key Functions and Modules
 
-updatePhysics(): Calculates gravity, jump velocity, and lane-shifting interpolation.
+* **GameManager.js / GameController.js (The Brain):**
+    * `updatePhysics()`: Calculates gravity, jump velocity, and lane-shifting interpolation.
+    * `processInteraction()`: Determines if a mouse click on a fruit was "Correct" or "Incorrect."
+    * `updateGameFlow()`: Manages transitions from Landing Page to Instructions and Game Loop.
+* **ObstacleFactory.js:** Uses a factory pattern to load obstacles based on spawn probability (tall obstacles are rarer).
+* **Reactive UI:** The HUD and Leaderboard "observe" the state. When values change, **Svelte automatically updates** the HTML without the game engine talking to the DOM.
+* **Token System:** Used in `swapCharacter()` to prevent "race conditions" between animations (e.g., jumping vs. running).
+* **Bridge Pattern:** Since p5.js and Three.js are separate engines, they communicate via a **Shared State Object**.
 
-processInteraction(): Determines if a mouse click on a fruit was "Correct" (Target) or "Incorrect" (Penalty).
+---
 
-updateGameFlow(): Manages the transition from the Landing Page to Instructions, and finally to the Game Loop.
+## Challenges
 
-ObstacleFactory.js - uses factory to load type of obstacle depending on their chance of appearing(tall ones are rarer)
-
-The UI (HUD, Leaderboard) "observes" the game state. When score or lives change in the JavaScript logic, **Svelte automatically updates** the HTML elements _without the game engine having to manually talk to the DOM_.
-
-In swapCharacter(), we use a Token System. This prevents "race conditions" where two animations (like Running and Jumping) might try to load at the same time and glitch the character. Only the request with the latest "token" is allowed to render.
-
-Since p5.js and Three.js are two different engines, they speak to each other through a Shared State Object(Bridge pattern).
-
-1. p5.js reads state.targetType to know what fruit to draw.
-
-2. Three.js reads state.currentSpeed to know how fast the ground should move.
-
-# Challenges
-
-1. Working with glb file
+1.  **Working with GLB Files:**
  This was my first time using a 3D .glb model, so figuring out how to load it, play different animations, and switch between them smoothly took a while. I kept running into random issues with the skeleton and animation states, and it was a lot of trial and error until things finally worked the way I wanted.
-2. Infinite world construction and grass
+2.  **Infinite World & Grass Rendering:**
 I originally wanted thin, pretty grass that moved nicely with wind. But every version I tried ended up breaking — the grass kept showing weird horizontal lines, especially when I attempted an infinite world where the player stands still and the world generates forward. I even tried using different grass shaders and examples from GitHub, but none of them fixed the glitch.
 Eventually I changed the idea: instead of generating an infinite world, I made three ground sections that loop as the player moves. Surprisingly, this not only simplified things but also completely fixed the grass issue.
-3. The "Gate test" idea
+3.  **The "Gate Test" Idea:**
 I also wanted to add a gate section where a question pops up and five gates appear, and the player has to go through the correct one. But adding this meant removing obstacles for a while, updating lives/score logic, and dealing with a bunch of timing issues. After testing, I realized it made the game too complicated and stressful for my friends who tried it, so I decided to keep the game simpler for now.
 
 # Resources Used
