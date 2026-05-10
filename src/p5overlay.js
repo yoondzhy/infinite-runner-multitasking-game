@@ -3,15 +3,33 @@ export const createSketch = (state, texturesRef) => {
   return (p) => {
     // --- PRIVATE UTILITIES ---
     const drawHeart = (x, y, size, active) => {
+      const s = size / 5;
+      
+      // Helper to draw the 8-bit grid shape
+      const drawShape = (posX, posY, pixelSize) => {
+        p.rect(posX + pixelSize, posY, pixelSize, pixelSize); 
+        p.rect(posX + 3 * pixelSize, posY, pixelSize, pixelSize);
+        p.rect(posX, posY + pixelSize, 5 * pixelSize, pixelSize);
+        p.rect(posX, posY + 2 * pixelSize, 5 * pixelSize, pixelSize);
+        p.rect(posX + pixelSize, posY + 3 * pixelSize, 3 * pixelSize, pixelSize);
+        p.rect(posX + 2 * pixelSize, posY + 4 * pixelSize, pixelSize, pixelSize);
+      };
       p.push();
       p.noStroke();
-      p.fill(active ? [255, 50, 50] : [100, 100, 100, 150]);
-      const s = size / 5;
-      p.rect(x + s, y, s, s); p.rect(x + 3 * s, y, s, s);
-      p.rect(x, y + s, 5 * s, s);
-      p.rect(x, y + 2 * s, 5 * s, s);
-      p.rect(x + s, y + 3 * s, 3 * s, s);
-      p.rect(x + 2 * s, y + 4 * s, s, s);
+      // 1. Draw the Outline (Black, slightly offset/larger)
+      p.fill(0);
+      // We draw it 2 pixels wider in all directions for that thick Minecraft border
+      drawShape(x - 2, y - 2, (size + 4) / 5);
+
+      // 2. Draw the Inner Heart
+      p.fill(active ? [255, 50, 50] : [60, 60, 60, 180]);
+      drawShape(x, y, s);
+
+      // 3. Add a "Highlight" pixel (Minecraft hearts have a little white glint)
+      if (active) {
+        p.fill(255, 150);
+        p.rect(x + s, y + s, s, s);
+      }
       p.pop();
     };
 
@@ -21,7 +39,6 @@ export const createSketch = (state, texturesRef) => {
         p.loadImage(`images/${path}`, img => resolve(img), () => resolve(null));
       });
 
-      // Load into the reference object passed from App.svelte
       texturesRef.STRAWBERRY = await loadImg('strawberry.png');
       texturesRef.WATERMELON = await loadImg('watermelon.png');
       texturesRef.BLUEBERRY = await loadImg('blubb.png');
@@ -70,7 +87,7 @@ export const createSketch = (state, texturesRef) => {
       }
 
       // 4. Render Hearts
-      for (let i = 0; i < 5; i++) drawHeart(20 + (i * 35), 20, 25, i < state.lives);
+      Array.from({ length: 5 }).map((_, i) => drawHeart(25 + (i * 60), 25, 45, i < state.lives));
 
       // 5. Random Target Spawning
       if (p.random(1) < 0.004) {
@@ -83,12 +100,12 @@ export const createSketch = (state, texturesRef) => {
 
       // 6. Current Target Box
       p.push();
-      p.fill(0, 150); p.rect(10, 60, 120, 140, 15);
+      p.fill(0, 150); p.rect(10, 80, 140, 140, 15);
       p.fill(255); p.textSize(14); p.textAlign(p.CENTER);
-      p.text("CURRENT TARGET", 70, 85);
+      p.text("CURRENT TARGET",80, 105);
       const boxImg = texturesRef[state.targetType];
-      if (boxImg) p.image(boxImg, 40, 95, 60, 60);
-      p.fill(0, 255, 200); p.text(state.targetType, 70, 185);
+      if (boxImg) p.image(boxImg, 40, 120, 70, 70);
+      p.fill(0, 255, 200); p.text(state.targetType, 80, 210);
       p.pop();
 
       // 7. Render/Move Targets

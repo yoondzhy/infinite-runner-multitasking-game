@@ -61,17 +61,11 @@ export function createClouds(group) {
   });
   
   const thickness = 2; 
-  // Increase count to 40 for a denser sky
   for (let i = 0; i < 40; i++) {
     const w = 10 + Math.random() * 20;
     const d = 10 + Math.random() * 20;
     const cloud = new THREE.Mesh(new THREE.BoxGeometry(w, thickness, d), cloudMaterial);
-    
     const y = 30 + Math.random() * 25;
-    
-    // FIX: Spread clouds from +50 (behind camera) to -400 (deep horizon)
-    // This ensures that as soon as the game starts, there are clouds 
-    // already "waiting" far in the distance.
     const z = (Math.random() * -450) + 50; 
     
     cloud.position.set((Math.random() - 0.5) * 280, y, z);

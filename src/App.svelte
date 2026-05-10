@@ -11,31 +11,16 @@ import { loadLeaderboard, saveScore, playerName, leaderboard , hasSubmitted } fr
 import { updateEnvironment, skyColors } from './environment.js';
 import { createObstacle, handleCollisions } from './obstacles.js';
 import { createSketch } from './p5overlay.js';
-import { 
-  handleInput, 
-  processInteraction, 
-  updatePhysics,
-  updateGameFlow // Add this
-} from './GameController.js';
-
-import { 
-  createWorldChunk, 
-  createClouds, 
-  moveWorld,
-  animateClouds     // Added this
-} from './WorldScene.js';
+import { handleInput, processInteraction, updatePhysics, updateGameFlow } from './GameController.js';
+import { createWorldChunk, createClouds, moveWorld,animateClouds } from './WorldScene.js';
 import { ObstacleFactory } from './ObstacleFactory.js';
 import { GameManager } from './GameManager.js';
-
-let showLanding = true;
-let lastTime = performance.now();
 
 async function handleStart() {
   showLanding = false;
   await tick();
   init();
 
-  // 3. Setup the Bridge Object
   const gameState = {
     get isPlaying() { return isPlaying; },
     get score() { return score; },
@@ -50,13 +35,10 @@ async function handleStart() {
     set gamePhase(v) { gamePhase = v; },
     get lastStarScore() { return lastStarScore; },
     set lastStarScore(v) { lastStarScore = v; },
-    
-    // FIX: Use getters for the arrays so they don't get stale!
     get targets() { return targets; },
     get scorePopups() { return scorePopups; },
     
     onHit: (t) => {
-    // MVC: Delegate the 'Decision' to the Controller
       processInteraction(t, gameState, scoreMultiplier, BOOST_DURATION);
     },
     onActivateBoost: (mult, dur) => {
@@ -64,8 +46,6 @@ async function handleStart() {
       multiplierTimer = dur;
     }
       };
-
-  // 4. Initialize p5 now that p5Container exists
   p5Instance = new p5(createSketch(gameState, textures), p5Container);
   
   lastTime = performance.now();
@@ -81,72 +61,87 @@ async function handleStart() {
   loop();
 }
 
+//App flow & timing
+let showLanding = true; // Toggles between LandingPage and the Game Wrapper
+let lastTime = performance.now(); // High-resolution timestamp for delta time calculation
 
+// Game Constants & State Variables for physical rules of the world
 const CONFIG = { 
   lane: 2.5, 
   jump: 0.35, 
-  grav: 0.015, 
-  playerScale: 1.7,
+  grav: 0.015,      // Gravity constant applied per frame
+  playerScale: 1.7,   // Visual scale multiplier for the 3D character
   START_SPEED: 45,   // Initial slow speed
-  MAX_SPEED: 95,     // The "chaos" threshold
+  MAX_SPEED: 95,     // The maximum speed threshold
   ACCELERATION: 1,  // Speed added per second
-  CYCLE_INTERVAL: 7000
 };
+const BOOST_DURATION = 20; // Length of the 'Star' multiplier in seconds
 
-let currentSpeed = CONFIG.START_SPEED;
+// RENDERING REFERENCES
+//View references used to bridge Svelte with Three.js and P5.js
+let container, canvas, p5Container; // HTML Element bindings
+let scene, camera, renderer;         // Three.js Core components
+let p5Instance;                      // p5.js Overlay instance
+let animationFrame;                  // ID for the requestAnimationFrame loop
+let uTime = { value: 0 }; // Global time tracker for shader animations and world logic
+
+// Game State Variables 
 let score = 0, isPlaying = false, gameOver = false, startScreen = true;
-let attentiveness = 100;
-let lives = 5;
+let lives = 5; let isDying = false, hitFlash = false;
+let currentSpeed = CONFIG.START_SPEED; // The active world velocity
+
+//Player physics, tracks the 3D position and physics state of the character.
 let lane = 0, currX = 0, isJumping = false, jumpV = 0, playerY = 0;
-let container, canvas, scene, camera, renderer, p5Container;
-let worldObjects = [], animationFrame, p5Instance;
-let isDying = false, hitFlash = false;
+let playerAnchor, currentModel = null, currentMixer = null, swapToken = 0;
 
-let spawnDistanceTracker = 0;
+// WORLD OBJECTS & GENERATION
+let worldObjects = [];
+let spawnDistanceTracker = 0; // Tracks distance traveled since last spawn
 const SPAWN_INTERVAL = 40; // Physical distance between obstacles
-let cloudGroup;
+let cloudGroup;   // Container for background parallax clouds
+let CHUNKS = []; // Ground segments for the infinite loop
+const CHUNK_COUNT = 3; // Number of segments in the pool
+const CHUNK_SIZE = 140; 
 
+// ENVIRONMENT & LIGHTING
 let sun, moon, ambientLight, sunLight, headLight;
 
 // 2D Game Logic
 let gamePhase = "START"; 
 let instructionTimer = 3;
 let targetType = "STRAWBERRY"; 
-let targets = [];
+let targets = [];     // Active 2D floating target objects
 let scorePopups = []; // To track the floating +100 labels
+let scoreMultiplier = 1; //to double the score when star is active
+let multiplierTimer = 0; // Countdown for active Star power-up
+let lastStarScore = 0; // Checkpoint to trigger Star spawn every 10k points
 
-let playerAnchor, currentModel = null, currentMixer = null, swapToken = 0;
-let CHUNKS = [];
-const CHUNK_COUNT = 3;
-const CHUNK_SIZE = 140; 
-
-let uTime = { value: 0 };
+// ASSET CACHE & LOADING
+// Memory management for models and textures to prevent redundant loads.
 const loader = new GLTFLoader();
 const glbCache = new Map();
-
 let textures = {};
 
-let scoreMultiplier = 1;
-let multiplierTimer = 0; // Remaining seconds of boost
-let lastStarScore = 0; // Add this line to prevent the crash
-const BOOST_DURATION = 20; // 20 seconds
 
 async function getCachedGLTF(file) {
   if (!glbCache.has(file)) glbCache.set(file, await loader.loadAsync(file));
   return glbCache.get(file);
 }
 
+// Asynchronously swaps the 3D player model and manages its animations
 async function swapCharacter(file, isDeathAnimation = false) {
+  // Incrementing a token ensures that if multiple swaps are called rapidly,
+  // only the most recent request (the latest token) actually updates the scene.
   const myToken = ++swapToken;
   const source = await getCachedGLTF(`3dmodels/${file}`);
-  if (myToken !== swapToken) return;
+  if (myToken !== swapToken) return;  // Exit if a newer swap request has already started (stale request prevention)
   const model = cloneSkeleton(source.scene);
   model.scale.setScalar(CONFIG.playerScale);
   model.rotation.y = Math.PI;
   const mixer = new THREE.AnimationMixer(model);
   if (source.animations?.length) {
     const action = mixer.clipAction(source.animations[0]);
-    if (isDeathAnimation) { action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true; }
+    if (isDeathAnimation) { action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true; } // Stop on the last frame instead of resetting
     action.play();
   }
   if (currentModel) playerAnchor.remove(currentModel);
@@ -154,6 +149,7 @@ async function swapCharacter(file, isDeathAnimation = false) {
   playerAnchor.add(currentModel);
 }
 
+// Initializes the Three.js engine, environment, and procedural world elements
 function init() {
   if (!canvas || !container) return; // Safety check
   scene = new THREE.Scene();
@@ -189,29 +185,15 @@ function init() {
   playerAnchor = new THREE.Group();
   scene.add(playerAnchor);
 
-  const ro = new ResizeObserver(() => {
-    if (!container || !renderer) return;
-    const { width, height } = container.getBoundingClientRect();
-    renderer.setSize(width, height);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-  });
-  ro.observe(container);
-
-  // 1. Update Fog to use the day color
   scene.fog = new THREE.Fog(skyColors.day, 150, 300);
-
-  // 2. Setup Lights
   ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
   sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
   sunLight.position.set(0, 50, -50);
-  
-  // 3. Add the "Headlight" to the camera (stays off during day)
   headLight = new THREE.PointLight(0x00d2ff, 0, 40);
   camera.add(headLight);
   scene.add(camera, ambientLight, sunLight);
 
-  // 4. Create Low-Poly Sun and Moon
+  // Create Low-Poly Sun and Moon
   const lowPolyGeo = new THREE.IcosahedronGeometry(10, 1);
   sun = new THREE.Mesh(lowPolyGeo, new THREE.MeshBasicMaterial({ color: 0xffffcc }));
   moon = new THREE.Mesh(lowPolyGeo, new THREE.MeshBasicMaterial({ color: 0x94b0ff }));
@@ -220,30 +202,40 @@ function init() {
   sun.position.set(60, 100, -250);
   moon.position.set(60, -100, -250);
   scene.add(sun, moon);
+
+  // Responsive Design (Viewport Observer)
+  // Automatically handles canvas resizing without reloading the engine
+  const ro = new ResizeObserver(() => {
+    if (!container || !renderer) return;
+    const { width, height } = container.getBoundingClientRect();
+    renderer.setSize(width, height);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  });
+  ro.observe(container);
 }
 
-async function spawn() {
+async function spawn() { //spawning obstacles with bigger one having 0.2 chance, smaller ones 0.8 chance
   const isRare = Math.random() < 0.2; 
   const modelFile = isRare ? "bird_in_a_claw_machine.glb" : "Simple computer.glb";
   
   const source = await getCachedGLTF(modelFile);
-  // Call the module function
   const obstacleData = createObstacle(isRare, source, CONFIG.lane);
   
   scene.add(obstacleData.mesh);
   worldObjects = [...worldObjects, obstacleData];
 }
 
+// Main Animation Loop: Executed every frame to update game state and rendering
 function update() {
-  const now = performance.now();
+  const now = performance.now(); // Time Synchronization
   const delta = (now - lastTime) / 1000;
   lastTime = now;
 
-  uTime.value += delta;
+  uTime.value += delta; // Update global shader uniforms and active 3D animations
   if (currentMixer) currentMixer.update(delta);
   if (!isPlaying) return;
 
-  // --- ADD THIS LINE HERE ---
   // This updates the instruction timer and switches the phase
   updateGameFlow({
     get gamePhase() { return gamePhase; },
@@ -252,21 +244,18 @@ function update() {
     set instructionTimer(v) { instructionTimer = v; }
   }, delta);
 
-  // If we are still in instructions, stop the rest of the game logic 
-  // (like movement and spawning) so the player doesn't die while reading.
-  if (gamePhase === "INSTRUCTIONS") return;
+  if (gamePhase === "INSTRUCTIONS") return; // Halt world movement and physics during the instruction countdown
 
-  const moveStep = currentSpeed * delta;
+  const moveStep = currentSpeed * delta; // Determine distance traveled this frame based on current velocity
 
-  // 1. Environment Controller
+  // Environment: Updates Day/Night cycle, lighting, and celestial movement
   updateEnvironment(uTime.value, scene, { ambientLight, sunLight, headLight }, { sun, moon });
 
-  // 2. World Controller
+  // Loops ground segments and animates background parallax clouds
   moveWorld(CHUNKS, moveStep, CHUNK_SIZE, CHUNK_COUNT);
   animateClouds(cloudGroup, moveStep);
 
-  // 3. Player Physics Controller
-  updatePhysics(
+  updatePhysics(  // Processes gravity, jumping, and lane-shifting kinematics
     { 
       get lane() { return lane; }, 
       get currX() { return currX; }, set currX(v) { currX = v; },
@@ -282,22 +271,24 @@ function update() {
   playerAnchor.position.x = currX;
   playerAnchor.position.y = playerY;
 
-  // 4. Obstacle Controller
-  worldObjects.forEach(obj => { obj.mesh.position.z += moveStep; });
+  // Obstacle Controller
+  worldObjects.forEach(obj => { obj.mesh.position.z += moveStep; }); // Move obstacles toward the player and check for bounding-box intersections
   worldObjects = handleCollisions(worldObjects, lane, playerY, triggerGameOver);
-  worldObjects = worldObjects.filter(obj => {
+  worldObjects = worldObjects.filter(obj => { // Garbage Collection: Remove obstacles that have passed behind the camera to free memory
     const active = obj.mesh.position.z < 25;
     if (!active) scene.remove(obj.mesh);
     return active;
   });
 
-  // 5. Scoring & Spawning Logic
+  // Manage active multiplier power-ups (Star/Boost)
   if (multiplierTimer > 0) {
     multiplierTimer -= delta;
     if (multiplierTimer <= 0) { multiplierTimer = 0; scoreMultiplier = 1; }
   }
   
+  // Calculate score based on speed and active multiplier
   score += Math.floor((currentSpeed / 40) * scoreMultiplier);
+  // Gradually increase velocity to scale game difficulty
   if (currentSpeed < CONFIG.MAX_SPEED) currentSpeed += CONFIG.ACCELERATION * delta;
 
   // 1. Ask the Static Manager if we should spawn
@@ -308,11 +299,6 @@ function update() {
           worldObjects = [...worldObjects, obstacle];
       });
   }
-  // spawnDistanceTracker += moveStep;
-  // if (spawnDistanceTracker >= SPAWN_INTERVAL) {
-  //   spawn();
-  //   spawnDistanceTracker = 0;
-  // }
 }
 
 
@@ -327,8 +313,8 @@ function triggerGameOver() {
 async function startGame() {
   if (!scene) return;
   currentSpeed = CONFIG.START_SPEED;
-  // Choose a random target type for this mission
-  const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"];
+
+  const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"]; // Choose a random target type for this mission
   targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
   targets.length = 0; 
@@ -343,7 +329,7 @@ async function startGame() {
 }
 
 const handleKeyDown = (e) => {
-  // MVC: Delegate keyboard input to the Controller
+  // Delegate keyboard input to the Controller
   handleInput(e, 
     { 
       isPlaying, 
@@ -364,7 +350,7 @@ const handleKeyDown = (e) => {
 onMount(() => {
   loadLeaderboard();
   window.addEventListener("keydown", handleKeyDown);
-  return () => { 
+  return () => {  // This return block executes when the component is destroyed (e.g., navigating away)
     cancelAnimationFrame(animationFrame); 
     window.removeEventListener("keydown", handleKeyDown);
     if (p5Instance) p5Instance.remove();
@@ -479,7 +465,7 @@ onMount(() => {
     text-align: center; 
     font-size: 0.8rem; 
     letter-spacing: 2px; 
-    color: hsl(308, 100%, 87%); /* Change color to cyan to match your theme */
+    color: hsl(308, 100%, 87%);
     text-transform: uppercase;
   }
   

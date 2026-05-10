@@ -1,4 +1,3 @@
-// GameController.js
 // @ts-nocheck
 export function handleInput(event, state, config, swapFn) {
   if (!state.isPlaying || state.isDying) return;
@@ -53,7 +52,6 @@ export function updatePhysics(state, config, delta, swapFn) {
   }
 }
 
-// GameController.js
 export function updateGameFlow(state, delta) {
   if (state.gamePhase === "INSTRUCTIONS") {
     state.instructionTimer -= delta;
