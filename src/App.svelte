@@ -8,22 +8,58 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
   
 import { loadLeaderboard, saveScore, playerName, leaderboard , hasSubmitted } from './leaderboard.js';
+import { updateEnvironment, skyColors } from './environment.js';
+import { createObstacle, handleCollisions } from './obstacles.js';
+import { createSketch } from './p5overlay.js';
 
 let showLanding = true;
 let lastTime = performance.now();
 
 async function handleStart() {
   showLanding = false;
-  // Wait for Svelte to render the #wrapper and canvas
+  // 1. Wait for Svelte to render the div so p5Container is NOT null
   await tick();
   
+  // 2. YOU FORGOT THIS: Initialize Three.js scene
   init();
-  p5Instance = new p5(sketch, p5Container);
-  lastTime = performance.now();// Ensure lastTime is reset to "now" so delta doesn't jump
-  // Start the game logic
+
+  // 3. Setup the Bridge Object
+  const gameState = {
+    get isPlaying() { return isPlaying; },
+    get score() { return score; },
+    set score(v) { score = v; }, // Allows p5 to update the score variable here
+    get lives() { return lives; },
+    set lives(v) { lives = v; }, // Allows p5 to update the lives variable here
+    get multiplierTimer() { return multiplierTimer; },
+    get targetType() { return targetType; },
+    get instructionTimer() { return instructionTimer; },
+    get gamePhase() { return gamePhase; },
+    get lastStarScore() { return lastStarScore; },
+    set lastStarScore(v) { lastStarScore = v; },
+    targets,
+    scorePopups,
+    onHit: (t) => {
+      // This logic runs in App.svelte scope when p5 calls it
+      if (t.type === targetType) {
+        const gain = 100 * scoreMultiplier;
+        score += gain;
+        scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: `+${gain}` });
+      } else if (t.type === "STAR") {
+        scoreMultiplier = 2;
+        multiplierTimer = BOOST_DURATION;
+        scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: "X2 BOOST!" });
+      } else {
+        if (lives > 0) lives--;
+      }
+    }
+  };
+
+  // 4. Initialize p5 now that p5Container exists
+  p5Instance = new p5(createSketch(gameState, textures), p5Container);
+  
+  lastTime = performance.now();
   startGame();
   
-  // Start the render loop
   const loop = () => { 
     animationFrame = requestAnimationFrame(loop); 
     update(); 
@@ -58,10 +94,7 @@ let isDying = false, hitFlash = false;
 let spawnDistanceTracker = 0;
 const SPAWN_INTERVAL = 40; // Physical distance between obstacles
 let cloudGroup;
-let skyColors = {
-  day: new THREE.Color(0x87CEFA),
-  night: new THREE.Color(0x02050a)
-};
+
 let sun, moon, ambientLight, sunLight, headLight;
 
 // 2D Game Logic
@@ -87,230 +120,6 @@ let multiplierTimer = 0; // Remaining seconds of boost
 let lastStarScore = 0; // Add this line to prevent the crash
 const BOOST_DURATION = 20; // 20 seconds
 
-const sketch = (p) => {
-  // --- FOOLPROOF IMAGE LOADER ---
-  p.setup = async () => {
-    const w = container?.clientWidth || p.windowWidth;
-    const h = container?.clientHeight || p.windowHeight;
-    p.createCanvas(w, h);
-
-    const loadImg = (path) => new Promise(resolve => {
-      p.loadImage(path, img => resolve(img), () => resolve(null));
-    });
-
-    textures.STRAWBERRY = await loadImg('strawberry.png');
-    textures.WATERMELON = await loadImg('watermelon.png');
-    textures.BLUEBERRY = await loadImg('blubb.png');
-    textures.STAR = await loadImg('star.png');
-  };
-
-  const drawHeart = (x, y, size, active) => {
-      p.push();
-      p.noStroke();
-      // Use red if active, grey if dead
-      p.fill(active ? [255, 50, 50] : [100, 100, 100, 150]);
-      const s = size / 5;
-      p.rect(x + s, y, s, s); p.rect(x + 3 * s, y, s, s);
-      p.rect(x, y + s, 5 * s, s);
-      p.rect(x, y + 2 * s, 5 * s, s);
-      p.rect(x + s, y + 3 * s, 3 * s, s);
-      p.rect(x + 2 * s, y + 4 * s, s, s);
-      p.pop();
-    };
-
-  p.draw = () => {
-    p.clear();
-    if (!isPlaying) return;
-
-    // --- MULTIPLIER HUD ---
-    if (multiplierTimer > 0) {
-      p.push();
-      p.fill(255, 215, 0); // Golden color
-      p.textSize(24);
-      p.textStyle(p.BOLD);
-      p.textAlign(p.RIGHT);
-      p.text(`BOOST: ${Math.ceil(multiplierTimer)}s`, p.width - 20, 100);
-      p.pop();
-      
-      // Optional: Add a subtle golden border to the screen
-      p.noFill();
-      p.stroke(255, 215, 0, 100);
-      p.strokeWeight(10);
-      p.rect(0, 0, p.width, p.height);
-    }
-
-    // Inside p.draw, near your other spawning logic
-    if (score > 0 && score % 10000 < 50 && score - lastStarScore >= 10000) {
-      lastStarScore = score;
-      targets.push({
-        x: -50, // Start off-screen left
-        y: p.random(p.height * 0.2, p.height * 0.5), // Random vertical height
-        type: "STAR",
-        speedX: p.random(6, 9), // Fly fast horizontally
-        speedY: 0,
-        rot: 0
-      });
-    }
-
-    if (gamePhase === "INSTRUCTIONS") {
-      p.fill(0, 200); // Darken background
-      p.rect(0, 0, p.width, p.height);
-      
-      p.fill(255);
-      p.textAlign(p.CENTER);
-      p.textFont('Segoe UI');
-      p.textStyle(p.BOLD);
-      
-      // The Mission Text
-      p.textSize(28);
-      p.text(`MISSION: COLLECT`, p.width / 2, p.height / 2 - 100);
-      
-      // Draw the target icon to collect
-      const targetImg = textures[targetType];
-      if (targetImg) {
-        p.imageMode(p.CENTER);
-        p.image(targetImg, p.width / 2, p.height / 2 - 20, 80, 80);
-      }
-      
-      p.textSize(32);
-      p.fill(0, 255, 200); // Cyan color for the target name
-      p.text(targetType, p.width / 2, p.height / 2 + 60);
-      
-      // Countdown
-      p.fill(255);
-      p.textSize(80);
-      p.text(Math.ceil(instructionTimer), p.width / 2, p.height / 2 + 160);
-      return;
-    }
-    // --- RENDER HEARTS ---
-    for (let i = 0; i < 5; i++) { // Always run 5 times
-      drawHeart(20 + (i * 35), 20, 25, i < lives);
-    }
-
-
-    if (p.random(1) < 0.004) {
-      const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"];
-      targets.push({
-        x: p.random(p.width * 0.2, p.width * 0.8),
-        y: -50,
-        type: types[p.floor(p.random(types.length))],
-        speed: p.random(1.5, 3),
-        rot: 0
-      });
-    }
-
-    // Inside p.draw(), top-left corner
-    p.push();
-    p.fill(0, 150); // Translucent dark background
-    p.rect(10, 60, 120, 140, 15); 
-    p.fill(255);
-    p.textSize(14);
-    p.textAlign(p.CENTER);
-    p.text("CURRENT TARGET", 70, 85);
-
-    const targetImg = textures[targetType];
-    if (targetImg) {
-      p.image(targetImg, 70, 135, 60, 60);
-    }
-    p.fill(0, 255, 200);
-    p.text(targetType, 70, 185);
-    p.pop();
-    
-    // --- RENDER IMAGES ---
-    for (let i = targets.length - 1; i >= 0; i--) {
-      let t = targets[i];
-      if (t.type === "STAR") {
-        t.x += t.speedX; // Move horizontal
-      } else {
-        t.y += t.speed;  // Move vertical
-      }
-
-      t.rot += 0.02;
-
-      p.push();
-      p.translate(t.x, t.y);
-      p.rotate(t.rot);
-      p.imageMode(p.CENTER);
-
-      // Check if the texture exists before trying to draw it
-      const img = textures[t.type];
-      if (img) {
-        // Draw the image. Scale it to 40x40 pixels (adjust as needed)
-        const size = t.type === "STAR" ? 120 : 100;
-        p.image(img, 0, 0, size, size);
-      } 
-      p.pop();
-
-      if (t.y > p.height + 50 || t.x > p.width + 50) {
-        // If the one we missed was the target, lose a life
-        if (t.type === targetType && lives > 0) {
-          lives--;
-        }
-        targets.splice(i, 1);
-      }
-    }
-
-    // --- RENDER FLOATING SCORE POPUPS ---
-    for (let i = scorePopups.length - 1; i >= 0; i--) {
-      let pop = scorePopups[i];
-      if (!pop.val) continue; // Safety check: skip if value is missing
-      
-      p.push();
-      p.textAlign(p.CENTER);
-      p.textStyle(p.BOLD);
-      p.textSize(32 + (1 - pop.life) * 20); // Gets bigger as it rises
-      
-      // Yellow color with fading alpha
-      p.fill(255, 230, 0, pop.opacity);
-      p.text(pop.val, pop.x, pop.y);
-      p.pop();
-
-      // Animate: Move up and fade out
-      pop.y -= 2; 
-      pop.life -= 0.02;
-      pop.opacity = pop.life * 255;
-
-      // Remove when faded
-      if (pop.life <= 0) {
-        scorePopups.splice(i, 1);
-      }
-    }
-
-    // --- 2D HAMMER ---
-    p.push();
-    p.translate(p.mouseX, p.mouseY);
-    p.rotate(-0.4);
-    p.fill(120, 80, 50); p.noStroke();
-    p.rect(-5, 0, 10, 40, 2);
-    p.fill(100);
-    p.rect(-20, -10, 40, 20, 4);
-    p.pop();
-  };
-
-  p.mousePressed = () => {
-    if (gamePhase !== "PLAYING") return;
-    for (let i = targets.length - 1; i >= 0; i--) {
-      let t = targets[i];
-      if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 60) {
-        if (t.type === targetType) {
-          // Apply multiplier to normal hits
-          const gain = 100 * scoreMultiplier;
-          score += gain;
-          scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: `+${gain}` });
-        } else if(t.type === "STAR") {
-          // Trigger the 2x Boost
-          scoreMultiplier = 2;
-          multiplierTimer = BOOST_DURATION;
-          scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: "X2 BOOST!" });
-        }else {
-          if (lives > 0) lives--;
-        }
-        targets.splice(i, 1);
-        break;
-      }
-    }
-  };
-};
 
 const grassVertex = `
   varying vec2 vUv;
@@ -466,31 +275,15 @@ function init() {
 }
 
 async function spawn() {
-const l = Math.floor(Math.random() * 5) - 2;
   const isRare = Math.random() < 0.2; 
   const modelFile = isRare ? "bird_in_a_claw_machine.glb" : "Simple computer.glb";
   
   const source = await getCachedGLTF(modelFile);
-  const model = cloneSkeleton(source.scene);
-  const pivot = new THREE.Group();
+  // Call the module function
+  const obstacleData = createObstacle(isRare, source, CONFIG.lane);
   
-  pivot.position.set(l * CONFIG.lane, 0, -130);
-
-  if (isRare) {
-    model.position.set(0, 3.0, 0); 
-    model.rotation.y = 0; 
-    model.scale.setScalar(0.6); 
-  } else {
-    model.position.set(0, 0.6, 0); 
-    model.rotation.y = Math.PI; 
-    model.scale.setScalar(5.5);
-  }
-  
-  pivot.add(model);
-  scene.add(pivot);
-  
-  // ADD THIS: Save the type so the collision logic knows it's tall
-  worldObjects = [...worldObjects, { mesh: pivot, lane: l, isTall: isRare }];
+  scene.add(obstacleData.mesh);
+  worldObjects = [...worldObjects, obstacleData];
 }
 
 
@@ -512,28 +305,11 @@ function update() {
     }
   }
 
-  // --- DAY/NIGHT CYCLE LOGIC START ---
-  
-  // Calculate alpha (0 = Day, 1 = Night) using a sine wave based on score
-  // let cycleProgress = (score % (CONFIG.CYCLE_INTERVAL * 2)) / (CONFIG.CYCLE_INTERVAL * 2); 
-  let cycleProgress = (uTime.value % 60) / 60;
-  let nightAlpha = Math.pow(Math.sin(cycleProgress * Math.PI), 2); 
-
-  // Interpolate Background and Fog colors
-  const currentSky = skyColors.day.clone().lerp(skyColors.night, nightAlpha);
-  scene.background.copy(currentSky);
-  scene.fog.color.copy(currentSky);
-  
-  // Adjust Light Intensities
-  ambientLight.intensity = THREE.MathUtils.lerp(1.5, 0.2, nightAlpha);
-  sunLight.intensity = THREE.MathUtils.lerp(1.0, 0.1, nightAlpha);
-  headLight.intensity = THREE.MathUtils.lerp(0, 2.5, nightAlpha); 
-
-  // Move Sun and Moon (Sun goes down, Moon comes up)
-  sun.position.y = THREE.MathUtils.lerp(100, -100, nightAlpha);
-  moon.position.y = THREE.MathUtils.lerp(-100, 100, nightAlpha);
-
-  // --- DAY/NIGHT CYCLE LOGIC END ---
+  // --- NEW MODULAR ENVIRONMENT CALL ---
+  updateEnvironment(uTime.value, scene, 
+    { ambientLight, sunLight, headLight }, 
+    { sun, moon }
+  );
 
   if (gamePhase === "INSTRUCTIONS") {
     instructionTimer -= delta;
@@ -586,23 +362,14 @@ function update() {
   }
   playerAnchor.position.y = playerY;
 
-  worldObjects = worldObjects.map(obj => {
-    obj.mesh.position.z += moveStep;
+  // Update object positions
+  worldObjects.forEach(obj => { obj.mesh.position.z += moveStep; });
 
-    // Collision detection
-    const isInLane = obj.lane === lane;
-    const isHitZ = Math.abs(obj.mesh.position.z) < 1.5;
-    
-    // NEW LOGIC: If it's a tall object, playerY doesn't matter. 
-    // If it's a short object (computer), you only hit if playerY < 1.5.
-    const isHitHeight = obj.isTall || playerY < 1.5;
+  // Handle Collisions using the module
+  worldObjects = handleCollisions(worldObjects, lane, playerY, triggerGameOver);
 
-    if (isHitZ && isInLane && isHitHeight) {
-      triggerGameOver();
-    }
-    return obj;
-  }).filter(obj => {
-    if (!obj) return false;
+  // Filter out-of-bounds objects
+  worldObjects = worldObjects.filter(obj => {
     const active = obj.mesh.position.z < 25;
     if (!active) scene.remove(obj.mesh);
     return active;
