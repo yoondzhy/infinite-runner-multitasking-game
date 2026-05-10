@@ -18,7 +18,7 @@ export const createSketch = (state, texturesRef) => {
     p.setup = async () => {
       p.createCanvas(p.windowWidth, p.windowHeight);
       const loadImg = (path) => new Promise(resolve => {
-        p.loadImage(path, img => resolve(img), () => resolve(null));
+        p.loadImage(`images/${path}`, img => resolve(img), () => resolve(null));
       });
 
       // Load into the reference object passed from App.svelte
@@ -115,6 +115,7 @@ export const createSketch = (state, texturesRef) => {
     const renderPopups = (p, popups) => {
       for (let i = popups.length - 1; i >= 0; i--) {
         let pop = popups[i];
+        if (!pop || !pop.val) continue; // SKIP IF DATA IS MISSING
         p.push();
         p.fill(255, 230, 0, pop.opacity);
         p.textSize(32 + (1 - pop.life) * 20);
@@ -134,15 +135,15 @@ export const createSketch = (state, texturesRef) => {
     };
 
     p.mousePressed = () => {
-      if (state.gamePhase !== "PLAYING") return;
-      for (let i = state.targets.length - 1; i >= 0; i--) {
-        let t = state.targets[i];
-        if (p.dist(p.mouseX, p.mouseY, t.x, t.y) < 60) {
-          state.onHit(t);
-          state.targets.splice(i, 1);
-          break;
-        }
-      }
+    // The View (p5) detects the raw click...
+    const clickedTarget = state.targets.find(t => p.dist(p.mouseX, p.mouseY, t.x, t.y) < 60);
+    
+    if (clickedTarget) {
+        // ...but the Controller (state.onHit) decides what the rules are.
+        state.onHit(clickedTarget);
+        // Remove from View list
+        state.targets.splice(state.targets.indexOf(clickedTarget), 1);
+    }
     };
   };
 };

@@ -31,7 +31,7 @@
     charScene.add(dirLight);
 
     const loader = new GLTFLoader();
-    loader.load("/hiphop.glb", (gltf) => {
+    loader.load("3dmodels/hiphop.glb", (gltf) => {
       const model = gltf.scene;
       model.scale.setScalar(3.5);
       model.position.y = 0;
@@ -73,7 +73,7 @@
     <div class="left-section">
       <div class="spacer"></div>
       
-      <img src="/overload_trans.png" alt="Overload Logo" class="game-logo" />
+      <img src="images/overload_trans.png" alt="Overload Logo" class="game-logo" />
 
       <button class="start-btn" on:click={onStart}>
         START RUN
@@ -93,7 +93,7 @@
     width: 100vw;
     height: 100vh;
     z-index: 9999;
-    background-image: url('/bggame.png');
+    background-image: url('images/bggame.png');
     background-size: cover;
     background-position: center;
     display: flex;

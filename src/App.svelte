@@ -11,48 +11,59 @@ import { loadLeaderboard, saveScore, playerName, leaderboard , hasSubmitted } fr
 import { updateEnvironment, skyColors } from './environment.js';
 import { createObstacle, handleCollisions } from './obstacles.js';
 import { createSketch } from './p5overlay.js';
+import { 
+  handleInput, 
+  processInteraction, 
+  updatePhysics,
+  updateGameFlow // Add this
+} from './GameController.js';
+
+import { 
+  createWorldChunk, 
+  createClouds, 
+  moveWorld,
+  animateClouds     // Added this
+} from './WorldScene.js';
+import { ObstacleFactory } from './ObstacleFactory.js';
+import { GameManager } from './GameManager.js';
 
 let showLanding = true;
 let lastTime = performance.now();
 
 async function handleStart() {
   showLanding = false;
-  // 1. Wait for Svelte to render the div so p5Container is NOT null
   await tick();
-  
-  // 2. YOU FORGOT THIS: Initialize Three.js scene
   init();
 
   // 3. Setup the Bridge Object
   const gameState = {
     get isPlaying() { return isPlaying; },
     get score() { return score; },
-    set score(v) { score = v; }, // Allows p5 to update the score variable here
+    set score(v) { score = v; },
     get lives() { return lives; },
-    set lives(v) { lives = v; }, // Allows p5 to update the lives variable here
+    set lives(v) { lives = v; },
     get multiplierTimer() { return multiplierTimer; },
     get targetType() { return targetType; },
     get instructionTimer() { return instructionTimer; },
+    set instructionTimer(v) { instructionTimer = v; },
     get gamePhase() { return gamePhase; },
+    set gamePhase(v) { gamePhase = v; },
     get lastStarScore() { return lastStarScore; },
     set lastStarScore(v) { lastStarScore = v; },
-    targets,
-    scorePopups,
+    
+    // FIX: Use getters for the arrays so they don't get stale!
+    get targets() { return targets; },
+    get scorePopups() { return scorePopups; },
+    
     onHit: (t) => {
-      // This logic runs in App.svelte scope when p5 calls it
-      if (t.type === targetType) {
-        const gain = 100 * scoreMultiplier;
-        score += gain;
-        scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: `+${gain}` });
-      } else if (t.type === "STAR") {
-        scoreMultiplier = 2;
-        multiplierTimer = BOOST_DURATION;
-        scorePopups.push({ x: t.x, y: t.y, opacity: 255, life: 1, val: "X2 BOOST!" });
-      } else {
-        if (lives > 0) lives--;
-      }
+    // MVC: Delegate the 'Decision' to the Controller
+      processInteraction(t, gameState, scoreMultiplier, BOOST_DURATION);
+    },
+    onActivateBoost: (mult, dur) => {
+      scoreMultiplier = mult;
+      multiplierTimer = dur;
     }
-  };
+      };
 
   // 4. Initialize p5 now that p5Container exists
   p5Instance = new p5(createSketch(gameState, textures), p5Container);
@@ -120,69 +131,6 @@ let multiplierTimer = 0; // Remaining seconds of boost
 let lastStarScore = 0; // Add this line to prevent the crash
 const BOOST_DURATION = 20; // 20 seconds
 
-
-const grassVertex = `
-  varying vec2 vUv;
-  uniform float uTime;
-  void main() {
-    vUv = uv;
-    vec3 pos = position;
-    float sway = sin(uTime * 2.0 + (instanceMatrix[3][0] * 0.5) + (instanceMatrix[3][2] * 0.5)) * 0.15 * uv.y;
-    pos.x += sway;
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(pos, 1.0);
-  }
-`;
-
-const grassFragment = `
-  varying vec2 vUv;
-  void main() {
-    gl_FragColor = vec4(mix(vec3(0.12, 0.28, 0.18), vec3(0.5, 0.72, 0.4), vUv.y), 1.0);
-  }
-`;
-
-
-const createClouds = (group) => {
-  const cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
-  const thickness = 2; 
-  for (let i = 0; i < 20; i++) {
-    const w = 10 + Math.random() * 20;
-    const d = 10 + Math.random() * 20;
-    const cloud = new THREE.Mesh(new THREE.BoxGeometry(w, thickness, d), cloudMaterial);
-    const y = 30 + Math.random() * 25;
-    cloud.position.set((Math.random() - 0.5) * 280, y, (Math.random() - 0.5) * 300);
-    group.add(cloud);
-  }
-};
-
-const createWorldChunk = (zOffset) => {
-  const group = new THREE.Group();
-  group.position.z = zOffset;
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(160, CHUNK_SIZE + 0.1), new THREE.MeshStandardMaterial({ color: 0x1e2b21 }));
-  floor.rotation.x = -Math.PI / 2;
-  group.add(floor);
-
-  const count = 7000;
-  const geo = new THREE.PlaneGeometry(0.4, 0.9, 1, 2);
-  geo.translate(0, 0.45, 0);
-  const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime }, vertexShader: grassVertex, fragmentShader: grassFragment,
-    side: THREE.DoubleSide, alphaToCoverage: true
-  });
-  const mesh = new THREE.InstancedMesh(geo, mat, count);
-  const dummy = new THREE.Object3D();
-  for(let i=0; i<count; i++) {
-    let x = (Math.random() - 0.5) * 120;
-    if (x > -10 && x < 10) x += (x > 0) ? 10 : -10;
-    dummy.position.set(x, 0, (Math.random() - 0.5) * CHUNK_SIZE);
-    dummy.rotation.y = Math.random() * Math.PI;
-    dummy.scale.setScalar(0.7 + Math.random() * 1.6);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
-  }
-  group.add(mesh);
-  return group;
-};
-
 async function getCachedGLTF(file) {
   if (!glbCache.has(file)) glbCache.set(file, await loader.loadAsync(file));
   return glbCache.get(file);
@@ -190,7 +138,7 @@ async function getCachedGLTF(file) {
 
 async function swapCharacter(file, isDeathAnimation = false) {
   const myToken = ++swapToken;
-  const source = await getCachedGLTF(file);
+  const source = await getCachedGLTF(`3dmodels/${file}`);
   if (myToken !== swapToken) return;
   const model = cloneSkeleton(source.scene);
   model.scale.setScalar(CONFIG.playerScale);
@@ -233,7 +181,7 @@ function init() {
   scene.add(cloudGroup);
 
   CHUNKS = Array.from({ length: CHUNK_COUNT }).map((_, i) => {
-    const chunk = createWorldChunk(-i * CHUNK_SIZE);
+    const chunk = createWorldChunk(-i * CHUNK_SIZE, uTime);
     scene.add(chunk);
     return chunk;
   });
@@ -286,7 +234,6 @@ async function spawn() {
   worldObjects = [...worldObjects, obstacleData];
 }
 
-
 function update() {
   const now = performance.now();
   const delta = (now - lastTime) / 1000;
@@ -296,92 +243,76 @@ function update() {
   if (currentMixer) currentMixer.update(delta);
   if (!isPlaying) return;
 
-  // --- MULTIPLIER COUNTDOWN ---
-  if (multiplierTimer > 0) {
-    multiplierTimer -= delta;
-    if (multiplierTimer <= 0) {
-      multiplierTimer = 0;
-      scoreMultiplier = 1;
-    }
-  }
+  // --- ADD THIS LINE HERE ---
+  // This updates the instruction timer and switches the phase
+  updateGameFlow({
+    get gamePhase() { return gamePhase; },
+    set gamePhase(v) { gamePhase = v; },
+    get instructionTimer() { return instructionTimer; },
+    set instructionTimer(v) { instructionTimer = v; }
+  }, delta);
 
-  // --- NEW MODULAR ENVIRONMENT CALL ---
-  updateEnvironment(uTime.value, scene, 
-    { ambientLight, sunLight, headLight }, 
-    { sun, moon }
-  );
-
-  if (gamePhase === "INSTRUCTIONS") {
-    instructionTimer -= delta;
-    if (instructionTimer <= 0) gamePhase = "PLAYING";
-    return;
-  }
-
-  if (currentSpeed < CONFIG.MAX_SPEED) {
-    currentSpeed += CONFIG.ACCELERATION * delta;
-  }
+  // If we are still in instructions, stop the rest of the game logic 
+  // (like movement and spawning) so the player doesn't die while reading.
+  if (gamePhase === "INSTRUCTIONS") return;
 
   const moveStep = currentSpeed * delta;
-  // --- BOOSTED DISTANCE SCORE ---
-  // We apply the multiplier to the floor calculation
-  score += Math.floor((currentSpeed / 40) * scoreMultiplier);
 
-  
+  // 1. Environment Controller
+  updateEnvironment(uTime.value, scene, { ambientLight, sunLight, headLight }, { sun, moon });
 
-  if (cloudGroup) {
-    // Moving at 40% speed (moveStep * 0.4) creates a nice parallax depth
-    cloudGroup.children.forEach(cloud => {
-      cloud.position.z += moveStep * 0.4; 
+  // 2. World Controller
+  moveWorld(CHUNKS, moveStep, CHUNK_SIZE, CHUNK_COUNT);
+  animateClouds(cloudGroup, moveStep);
 
-      // Reset cloud position if it goes too far behind the camera
-      if (cloud.position.z > 50) {
-        cloud.position.z = -250;
-        cloud.position.x = (Math.random() - 0.5) * 280; // Randomize X again for variety
-      }
-    });
-  }
+  // 3. Player Physics Controller
+  updatePhysics(
+    { 
+      get lane() { return lane; }, 
+      get currX() { return currX; }, set currX(v) { currX = v; },
+      get playerY() { return playerY; }, set playerY(v) { playerY = v; },
+      get isJumping() { return isJumping; }, set isJumping(v) { isJumping = v; },
+      get jumpV() { return jumpV; }, set jumpV(v) { jumpV = v; },
+      isDying 
+    }, 
+    CONFIG, delta, swapCharacter
+  );
 
-  if (lives <= 0) triggerGameOver();
-
-  CHUNKS.forEach(chunk => {
-    chunk.position.z += moveStep;
-    if (chunk.position.z > CHUNK_SIZE) chunk.position.z -= CHUNK_SIZE * CHUNK_COUNT;
-  });
-
-  currX += (lane * CONFIG.lane - currX) * 0.18;
+  // Apply visual positions to the actual 3D objects
   playerAnchor.position.x = currX;
-
-  if (isJumping) {
-    jumpV -= CONFIG.grav;
-    playerY += jumpV;
-    if (playerY <= 0) { 
-      playerY = 0; 
-      isJumping = false; 
-      if (!isDying) swapCharacter("Running.glb"); 
-    }
-  }
   playerAnchor.position.y = playerY;
 
-  // Update object positions
+  // 4. Obstacle Controller
   worldObjects.forEach(obj => { obj.mesh.position.z += moveStep; });
-
-  // Handle Collisions using the module
   worldObjects = handleCollisions(worldObjects, lane, playerY, triggerGameOver);
-
-  // Filter out-of-bounds objects
   worldObjects = worldObjects.filter(obj => {
     const active = obj.mesh.position.z < 25;
     if (!active) scene.remove(obj.mesh);
     return active;
   });
 
-  // Normal Obstacle Spawning
-  spawnDistanceTracker += moveStep;
-  if (spawnDistanceTracker >= SPAWN_INTERVAL) {
-    spawn();
-    spawnDistanceTracker = 0;
-  
+  // 5. Scoring & Spawning Logic
+  if (multiplierTimer > 0) {
+    multiplierTimer -= delta;
+    if (multiplierTimer <= 0) { multiplierTimer = 0; scoreMultiplier = 1; }
   }
+  
+  score += Math.floor((currentSpeed / 40) * scoreMultiplier);
+  if (currentSpeed < CONFIG.MAX_SPEED) currentSpeed += CONFIG.ACCELERATION * delta;
+
+  // 1. Ask the Static Manager if we should spawn
+  if (GameManager.shouldSpawn(moveStep)) {
+      // 2. Pass 'loader' so the factory can fetch models if needed
+      ObstacleFactory.spawnRandom(glbCache, loader, CONFIG.lane).then(obstacle => {
+          scene.add(obstacle.mesh);
+          worldObjects = [...worldObjects, obstacle];
+      });
+  }
+  // spawnDistanceTracker += moveStep;
+  // if (spawnDistanceTracker >= SPAWN_INTERVAL) {
+  //   spawn();
+  //   spawnDistanceTracker = 0;
+  // }
 }
 
 
@@ -400,8 +331,9 @@ async function startGame() {
   const types = ["STRAWBERRY", "WATERMELON", "BLUEBERRY"];
   targetType = types[Math.floor(Math.random() * types.length)];
   worldObjects.forEach(obj => scene.remove(obj.mesh));
+  targets.length = 0; 
+  scorePopups.length = 0;
   worldObjects = [];
-  targets = []; scorePopups = [];
   spawnDistanceTracker = 0;
   score = 0; isPlaying = true; gameOver = false; startScreen = false; lives = 5; // Reset lives
   gamePhase = "INSTRUCTIONS"; instructionTimer = 3;
@@ -411,16 +343,22 @@ async function startGame() {
 }
 
 const handleKeyDown = (e) => {
-  if (!isPlaying || isDying) return;
-  const actions = {
-    ArrowLeft: () => lane > -2 && lane--, a: () => lane > -2 && lane--, A: () => lane > -2 && lane--,
-    ArrowRight: () => lane < 2 && lane++, d: () => lane < 2 && lane++, D: () => lane < 2 && lane++,
-    " ": () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
-    ArrowUp: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
-    w: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb")),
-    W: () => !isJumping && (isJumping = true, jumpV = CONFIG.jump, swapCharacter("Jump.glb"))
-  };
-  actions[e.key]?.();
+  // MVC: Delegate keyboard input to the Controller
+  handleInput(e, 
+    { 
+      isPlaying, 
+      isDying, 
+      // Use getters/setters so the Controller can actually change the Model
+      get lane() { return lane; }, 
+      set lane(v) { lane = v; },
+      get isJumping() { return isJumping; },
+      set isJumping(v) { isJumping = v; },
+      get jumpV() { return jumpV; },
+      set jumpV(v) { jumpV = v; }
+    }, 
+    CONFIG, 
+    swapCharacter
+  );
 };
 
 onMount(() => {

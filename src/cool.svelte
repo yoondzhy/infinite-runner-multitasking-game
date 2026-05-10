@@ -649,3 +649,100 @@ onMount(() => {
   
   .flash { position: absolute; inset: 0; background: white; z-index: 20; pointer-events: none; }
 </style>
+
+// function update() {
+//   const now = performance.now();
+//   const delta = (now - lastTime) / 1000;
+//   lastTime = now;
+
+//   uTime.value += delta;
+//   if (currentMixer) currentMixer.update(delta);
+//   if (!isPlaying) return;
+
+//   // --- MULTIPLIER COUNTDOWN ---
+//   if (multiplierTimer > 0) {
+//     multiplierTimer -= delta;
+//     if (multiplierTimer <= 0) {
+//       multiplierTimer = 0;
+//       scoreMultiplier = 1;
+//     }
+//   }
+
+//   // --- NEW MODULAR ENVIRONMENT CALL ---
+//   updateEnvironment(uTime.value, scene, 
+//     { ambientLight, sunLight, headLight }, 
+//     { sun, moon }
+//   );
+
+//   if (gamePhase === "INSTRUCTIONS") {
+//     instructionTimer -= delta;
+//     if (instructionTimer <= 0) gamePhase = "PLAYING";
+//     return;
+//   }
+
+//   if (currentSpeed < CONFIG.MAX_SPEED) {
+//     currentSpeed += CONFIG.ACCELERATION * delta;
+//   }
+
+//   const moveStep = currentSpeed * delta;
+//   // --- BOOSTED DISTANCE SCORE ---
+//   // We apply the multiplier to the floor calculation
+//   score += Math.floor((currentSpeed / 40) * scoreMultiplier);
+
+  
+
+//   if (cloudGroup) {
+//     // Moving at 40% speed (moveStep * 0.4) creates a nice parallax depth
+//     cloudGroup.children.forEach(cloud => {
+//       cloud.position.z += moveStep * 0.4; 
+
+//       // Reset cloud position if it goes too far behind the camera
+//       if (cloud.position.z > 50) {
+//         cloud.position.z = -250;
+//         cloud.position.x = (Math.random() - 0.5) * 280; // Randomize X again for variety
+//       }
+//     });
+//   }
+
+//   if (lives <= 0) triggerGameOver();
+
+//   CHUNKS.forEach(chunk => {
+//     chunk.position.z += moveStep;
+//     if (chunk.position.z > CHUNK_SIZE) chunk.position.z -= CHUNK_SIZE * CHUNK_COUNT;
+//   });
+
+//   currX += (lane * CONFIG.lane - currX) * 0.18;
+//   playerAnchor.position.x = currX;
+
+//   if (isJumping) {
+//     jumpV -= CONFIG.grav;
+//     playerY += jumpV;
+//     if (playerY <= 0) { 
+//       playerY = 0; 
+//       isJumping = false; 
+//       if (!isDying) swapCharacter("Running.glb"); 
+//     }
+//   }
+//   playerAnchor.position.y = playerY;
+
+//   // Update object positions
+//   worldObjects.forEach(obj => { obj.mesh.position.z += moveStep; });
+
+//   // Handle Collisions using the module
+//   worldObjects = handleCollisions(worldObjects, lane, playerY, triggerGameOver);
+
+//   // Filter out-of-bounds objects
+//   worldObjects = worldObjects.filter(obj => {
+//     const active = obj.mesh.position.z < 25;
+//     if (!active) scene.remove(obj.mesh);
+//     return active;
+//   });
+
+//   // Normal Obstacle Spawning
+//   spawnDistanceTracker += moveStep;
+//   if (spawnDistanceTracker >= SPAWN_INTERVAL) {
+//     spawn();
+//     spawnDistanceTracker = 0;
+  
+//   }
+// }
