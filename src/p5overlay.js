@@ -36,7 +36,11 @@ export const createSketch = (state, texturesRef) => {
     p.setup = async () => {
       p.createCanvas(p.windowWidth, p.windowHeight);
       const loadImg = (path) => new Promise(resolve => {
-        p.loadImage(`images/${path}`, img => resolve(img), () => resolve(null));
+        p.loadImage(`images/${path}`, img => resolve(img),
+            (err) => {
+        console.error(`Failed to load image at: ${path}`, err);
+        resolve(null);
+    });
       });
 
       texturesRef.STRAWBERRY = await loadImg('strawberry.png');

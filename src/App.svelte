@@ -217,7 +217,7 @@ function init() {
 
 async function spawn() { //spawning obstacles with bigger one having 0.2 chance, smaller ones 0.8 chance
   const isRare = Math.random() < 0.2; 
-  const modelFile = isRare ? "bird_in_a_claw_machine.glb" : "Simple computer.glb";
+  const modelFile = isRare ? "3dmodels/bird_in_a_claw_machine.glb" : "3dmodels/Simple computer.glb";
   
   const source = await getCachedGLTF(modelFile);
   const obstacleData = createObstacle(isRare, source, CONFIG.lane);
